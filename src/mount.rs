@@ -549,7 +549,7 @@ mod winfsp_adapter {
         host.start()
             .map_err(|e| anyhow!("FileSystemHost::start failed: {e}"))?;
 
-        eprintln!("ext4 mounted at {mount_point}. Ctrl-C to unmount.");
+        println!("ext4 mounted at {mount_point}. Ctrl-C to unmount.");
         // Block until Ctrl-C; WinFsp's host runs on its own threads.
         let (tx, rx) = std::sync::mpsc::channel();
         ctrlc::set_handler(move || {
