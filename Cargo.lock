@@ -757,8 +757,6 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 [[package]]
 name = "winfsp"
 version = "0.12.4+winfsp-2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51325fc20d218567a903cd5c382ad7d5a765f6860043f9c7d9ee1e907c5b75f6"
 dependencies = [
  "bytemuck",
  "parking_lot",
@@ -773,8 +771,6 @@ dependencies = [
 [[package]]
 name = "winfsp-sys"
 version = "0.12.1+winfsp-2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d42acc30c105f8d33507f556398237c738b681271c775a3b94eefd29d2b8c77e"
 dependencies = [
  "bindgen",
 ]

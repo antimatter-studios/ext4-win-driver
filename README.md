@@ -22,7 +22,11 @@ crate is the distribution unit.
 - [x] `--part N` mounts a partition slice via the C ABI's callback mount
 - [x] Win32 raw-device support (`\\.\X:`, `\\.\PhysicalDriveN`)
 - [x] **WinFsp read-only mount** — verified end-to-end on Windows 11 ARM64
-- [ ] WinFsp read-write mount
+- [x] **WinFsp read-write mount** (`--rw`) — create/write/truncate/rename/
+      unlink/rmdir/mkdir/utimens wired through to the C ABI. v1 caveat:
+      `write` round-trips the whole file (the underlying ABI is a "save-as"
+      replace), so large-file workloads are slow until a positional
+      `pwrite` lands in `fs-ext4`.
 - [ ] MSI installer (bundles WinFsp)
 
 ## Usage
@@ -42,7 +46,8 @@ ext4 ls     <whole-disk.img> --part 1 /    # browse partition 1
 WinFsp mount (Windows + `mount` feature):
 
 ```
-ext4 mount <image> --drive X:
+ext4 mount <image> --drive X:           # read-only (default)
+ext4 mount <image> --drive X: --rw      # read-write
 ```
 
 Then browse `X:` in Explorer, or `Get-ChildItem X:\`, etc. Ctrl-C to unmount.
