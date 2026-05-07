@@ -14,13 +14,12 @@
 use anyhow::{Context, Result, anyhow, bail};
 use fs_ext4::capi::*;
 use std::ffi::{CStr, CString};
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
 use std::os::raw::{c_int, c_void};
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::Arc;
 
 use crate::MountArgs;
+use crate::device::{BlockSource, FileSource};
 use crate::partition;
 
 // ---------------------------------------------------------------------------
@@ -81,7 +80,8 @@ impl Mount {
     }
 
     fn open_partition(image: &Path, n: usize) -> Result<Self> {
-        let parts = partition::list(image)
+        let src: Arc<dyn BlockSource> = Arc::new(FileSource::open(image)?);
+        let parts = partition::list_from_source(src.as_ref())
             .with_context(|| format!("listing partitions in {image:?}"))?;
         if parts.is_empty() {
             bail!("no partitions found in {image:?}");
@@ -90,13 +90,19 @@ impl Mount {
             bail!("--part {n} out of range (1..={})", parts.len());
         }
         let p = &parts[n - 1];
-        let f = File::open(image).with_context(|| format!("opening {image:?}"))?;
+        let base = p.start_lba * 512;
+        let len = p.num_sectors * 512;
+        let end = base
+            .checked_add(len)
+            .ok_or_else(|| anyhow!("partition geometry overflows u64"))?;
+        if end > src.size() {
+            bail!(
+                "partition {n} extends past device end: {end} > {} bytes",
+                src.size()
+            );
+        }
 
-        let ctx = Box::new(SliceCtx {
-            file: Mutex::new(f),
-            base: p.start_lba * 512,
-            len: p.num_sectors * 512,
-        });
+        let ctx = Box::new(SliceCtx { src, base, len });
         let raw = Box::into_raw(ctx);
 
         let cfg = fs_ext4_blockdev_cfg_t {
@@ -110,7 +116,6 @@ impl Mount {
         };
         let fs = unsafe { fs_ext4_mount_with_callbacks(&cfg) };
         if fs.is_null() {
-            // Reclaim the box we leaked.
             unsafe { drop(Box::from_raw(raw)) };
             bail!("mount partition {n} ({}) failed: {}", p.kind, last_err());
         }
@@ -138,7 +143,7 @@ impl Drop for Mount {
 // ---------------------------------------------------------------------------
 
 struct SliceCtx {
-    file: Mutex<File>,
+    src: Arc<dyn BlockSource>,
     base: u64,
     len: u64,
 }
@@ -159,16 +164,8 @@ extern "C" fn slice_read_cb(
     if end > ctx.len {
         return -1;
     }
-    let abs = ctx.base + offset;
-    let mut f = match ctx.file.lock() {
-        Ok(g) => g,
-        Err(_) => return -1,
-    };
-    if f.seek(SeekFrom::Start(abs)).is_err() {
-        return -1;
-    }
     let slice = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, length as usize) };
-    if f.read_exact(slice).is_err() {
+    if ctx.src.read_at(ctx.base + offset, slice).is_err() {
         return -1;
     }
     0

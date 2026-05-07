@@ -9,9 +9,8 @@
 //! (Windows: `IOCTL_DISK_GET_DRIVE_GEOMETRY_EX`). That lands together with
 //! the Win32 raw-device `BlockDevice` impl.
 
+use crate::device::{BlockSource, FileSource};
 use anyhow::{Context, Result, bail};
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 const SECTOR: u64 = 512;
@@ -33,21 +32,25 @@ pub struct Partition {
     pub name: Option<String>,
 }
 
-/// Parse the partition table at `path`. Detects GPT (via 0xEE protective
-/// MBR entry) and falls back to plain MBR.
+/// Parse the partition table at `path`. Convenience wrapper over
+/// [`list_from_source`] that opens a [`FileSource`] internally.
 pub fn list(path: &Path) -> Result<Vec<Partition>> {
-    let mut f = File::open(path).with_context(|| format!("opening {path:?}"))?;
+    let src = FileSource::open(path)?;
+    list_from_source(&src)
+}
+
+/// Parse the partition table from any [`BlockSource`]. Detects GPT (via
+/// 0xEE protective MBR entry) and falls back to plain MBR.
+pub fn list_from_source(src: &dyn BlockSource) -> Result<Vec<Partition>> {
     let mut mbr = [0u8; 512];
-    f.seek(SeekFrom::Start(0))?;
-    f.read_exact(&mut mbr)
-        .with_context(|| format!("reading MBR sector from {path:?}"))?;
+    src.read_at(0, &mut mbr).context("reading MBR sector")?;
 
     if mbr[MBR_SIG_OFF] != 0x55 || mbr[MBR_SIG_OFF + 1] != 0xAA {
         bail!("no MBR signature at offset 510 — not a partitioned device");
     }
 
     if has_gpt_protective(&mbr) {
-        parse_gpt(&mut f).context("parsing GPT")
+        parse_gpt(src).context("parsing GPT")
     } else {
         Ok(parse_mbr(&mbr))
     }
@@ -83,10 +86,10 @@ fn parse_mbr(mbr: &[u8; 512]) -> Vec<Partition> {
     out
 }
 
-fn parse_gpt(f: &mut File) -> Result<Vec<Partition>> {
+fn parse_gpt(src: &dyn BlockSource) -> Result<Vec<Partition>> {
     let mut hdr = [0u8; 512];
-    f.seek(SeekFrom::Start(SECTOR))?;
-    f.read_exact(&mut hdr).context("reading GPT header sector")?;
+    src.read_at(SECTOR, &mut hdr)
+        .context("reading GPT header sector")?;
     if &hdr[0..8] != GPT_SIG {
         bail!("GPT header signature missing (expected \"EFI PART\")");
     }
@@ -106,8 +109,8 @@ fn parse_gpt(f: &mut File) -> Result<Vec<Partition>> {
 
     let total = n_entries as usize * entry_size;
     let mut buf = vec![0u8; total];
-    f.seek(SeekFrom::Start(part_array_lba * SECTOR))?;
-    f.read_exact(&mut buf).context("reading GPT entries")?;
+    src.read_at(part_array_lba * SECTOR, &mut buf)
+        .context("reading GPT entries")?;
 
     let mut out = Vec::new();
     for i in 0..n_entries as usize {
@@ -191,6 +194,7 @@ fn format_guid(g: &[u8; 16]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
     use std::io::Write;
 
     fn tmp_path(tag: &str) -> std::path::PathBuf {
