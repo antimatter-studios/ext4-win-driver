@@ -1,0 +1,210 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ext4-win-driver MSI source — WiX 4+.
+
+  Build via `installer/build.ps1` (which shells out to `wix build`).
+  The build script passes:
+    -d ExePath=<path to ext4.exe>     (PATH to the release binary)
+    -d Version=<x.y.z>                (from Cargo.toml; default 0.1.0)
+
+  Stable UpgradeCode — DO NOT regenerate on every build, or major-upgrade
+  detection breaks. Generated as a v4 UUID for this product line.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Package
+      Name="ext4-win-driver"
+      Manufacturer="Chris Thomas"
+      Version="$(var.Version)"
+      UpgradeCode="d6f3a7c2-9b14-4e7a-9b23-7c5f1f4a8e91"
+      Scope="perMachine"
+      Compressed="yes"
+      InstallerVersion="500">
+
+    <SummaryInformation
+        Description="ext4-win-driver — browse and mount ext4 volumes on Windows"
+        Manufacturer="Chris Thomas" />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Major upgrade: silently uninstall older versions. -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of ext4-win-driver is already installed." />
+
+    <!--
+      WinFsp detection. WinFsp's installer writes
+        HKLM\SOFTWARE\WOW6432Node\WinFsp\InstallDir       (32-bit view, primary)
+        HKLM\SOFTWARE\WinFsp\InstallDir                    (64-bit view, fallback)
+      If neither is present we abort with a friendly message.
+    -->
+    <Property Id="WINFSPINSTALLDIR">
+      <RegistrySearch
+          Id="FindWinFspInstallDir32"
+          Root="HKLM"
+          Key="SOFTWARE\WOW6432Node\WinFsp"
+          Name="InstallDir"
+          Type="raw"
+          Bitness="always32" />
+    </Property>
+    <Property Id="WINFSPINSTALLDIR64">
+      <RegistrySearch
+          Id="FindWinFspInstallDir64"
+          Root="HKLM"
+          Key="SOFTWARE\WinFsp"
+          Name="InstallDir"
+          Type="raw"
+          Bitness="always64" />
+    </Property>
+
+    <!--
+      LaunchCondition: at least one of the two InstallDir values must be present.
+      Message is shown in the standard MSI error dialog; the URL is plain text
+      because LaunchCondition messages don't render hyperlinks.
+    -->
+    <Launch
+        Condition="WINFSPINSTALLDIR OR WINFSPINSTALLDIR64 OR Installed"
+        Message="WinFsp 2.x is required but was not found. Please install WinFsp from https://winfsp.dev/ and then re-run this installer." />
+
+    <Feature Id="Main" Title="ext4-win-driver" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+      <ComponentGroupRef Id="ContextMenuComponents" />
+      <ComponentGroupRef Id="StartMenuComponents" />
+    </Feature>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="ext4-win-driver" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="ext4-win-driver" />
+    </StandardDirectory>
+
+    <!-- ====================================================================
+         Main payload: ext4.exe, the helper PowerShell script, the LICENSE.
+         ==================================================================== -->
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+
+      <Component Id="Ext4Exe" Guid="*">
+        <File
+            Id="Ext4ExeFile"
+            Source="$(var.ExePath)"
+            KeyPath="yes"
+            Name="ext4.exe" />
+        <!--
+          PATH update via WixUtilExtension. System=yes writes to the machine
+          PATH (we're a perMachine install). Action=set + Part=last appends
+          INSTALLFOLDER. The element is automatically reversed on uninstall.
+        -->
+        <Environment
+            Id="PathEnv"
+            Name="PATH"
+            Value="[INSTALLFOLDER]"
+            Permanent="no"
+            Part="last"
+            Action="set"
+            System="yes" />
+      </Component>
+
+      <Component Id="MountScript" Guid="*">
+        <File
+            Id="MountScriptFile"
+            Source="Mount-Ext4.ps1"
+            KeyPath="yes"
+            Name="Mount-Ext4.ps1" />
+      </Component>
+
+      <Component Id="LicenseFile" Guid="*">
+        <File
+            Id="LicenseFileF"
+            Source="LICENSE"
+            KeyPath="yes"
+            Name="LICENSE.txt" />
+      </Component>
+
+    </ComponentGroup>
+
+    <!-- ====================================================================
+         Explorer right-click context menu on .img files.
+
+         We attach to SystemFileAssociations\.img (a verb-only key that doesn't
+         override the user's default association — Disk Management's built-in
+         Mount verb keeps working for VHD/ISO).
+
+         Components live under INSTALLFOLDER so KeyPath can sit on a registry
+         value. Each Component MUST have exactly one KeyPath.
+         ==================================================================== -->
+    <ComponentGroup Id="ContextMenuComponents" Directory="INSTALLFOLDER">
+
+      <Component Id="ContextMenuVerb" Guid="*">
+        <RegistryKey Root="HKCR" Key="SystemFileAssociations\.img\shell\MountAsExt4">
+          <RegistryValue
+              Type="string"
+              Value="Mount as ext4"
+              KeyPath="yes" />
+          <RegistryValue
+              Name="Icon"
+              Type="string"
+              Value="&quot;[INSTALLFOLDER]ext4.exe&quot;" />
+        </RegistryKey>
+      </Component>
+
+      <Component Id="ContextMenuCommand" Guid="*">
+        <RegistryKey Root="HKCR" Key="SystemFileAssociations\.img\shell\MountAsExt4\command">
+          <RegistryValue
+              Type="string"
+              Value="powershell.exe -NoExit -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]Mount-Ext4.ps1&quot; &quot;%1&quot;"
+              KeyPath="yes" />
+        </RegistryKey>
+      </Component>
+
+    </ComponentGroup>
+
+    <!-- ====================================================================
+         Start Menu shortcuts.
+
+         Per-user state is captured via a HKCU registry KeyPath sentinel —
+         that's the canonical way to give a per-machine install a per-user
+         shortcut component (otherwise ICE38/ICE43 fire).
+         ==================================================================== -->
+    <ComponentGroup Id="StartMenuComponents" Directory="ApplicationProgramsFolder">
+
+      <Component Id="StartMenuShortcuts" Guid="*">
+        <Shortcut
+            Id="MountImgShortcut"
+            Name="Mount ext4 image..."
+            Description="Pick an ext4 .img file and mount it as a Windows drive letter."
+            Target="powershell.exe"
+            Arguments="-NoExit -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]Mount-Ext4.ps1&quot;"
+            WorkingDirectory="INSTALLFOLDER"
+            Icon="ext4Icon.exe"
+            IconIndex="0" />
+        <Shortcut
+            Id="WatchShortcut"
+            Name="ext4 watch service"
+            Description="Run the ext4 watch service in a console (Ctrl-C to stop)."
+            Target="[INSTALLFOLDER]ext4.exe"
+            Arguments="watch"
+            WorkingDirectory="INSTALLFOLDER"
+            Icon="ext4Icon.exe"
+            IconIndex="0" />
+        <RemoveFolder Id="RemoveStartMenuFolder" On="uninstall" />
+        <RegistryValue
+            Root="HKCU"
+            Key="Software\ext4-win-driver"
+            Name="StartMenuShortcuts"
+            Type="integer"
+            Value="1"
+            KeyPath="yes" />
+      </Component>
+
+    </ComponentGroup>
+
+    <!-- Icon source for the shortcuts (re-uses the EXE's embedded icon, if any). -->
+    <Icon Id="ext4Icon.exe" SourceFile="$(var.ExePath)" />
+    <Property Id="ARPPRODUCTICON" Value="ext4Icon.exe" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/christhomas/ext4-win-driver" />
+    <Property Id="ARPHELPLINK" Value="https://winfsp.dev/" />
+
+  </Package>
+</Wix>
