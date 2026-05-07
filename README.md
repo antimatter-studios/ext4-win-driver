@@ -78,6 +78,30 @@ cargo build --release --features mount
   - LLVM-MinGW (`winget install MartinStorsjo.LLVM-MinGW.UCRT`)
 - `LIBCLANG_PATH=C:\Program Files\LLVM\bin` so bindgen can find `libclang.dll`.
 
+## Testing
+
+Scenarios live in [`test-matrix.json`](./test-matrix.json) and the per-project
+adapter config in [`harness.toml`](./harness.toml). Both are consumed by the
+shared [`fs-test-harness`](../fs-test-harness/) (sibling repo for now;
+submodule once we tag a release).
+
+One-time setup, on the Mac:
+
+```sh
+bash ../fs-test-harness/scripts/setup-local.sh        # writes .test-env
+```
+
+Run a scenario end-to-end (Mac → SSH → Windows VM → diag pull):
+
+```sh
+bash ../fs-test-harness/scripts/test-windows-matrix.sh basic-ro-list
+```
+
+Diagnostics land under `test-diagnostics/run-<UTC>/`. See the harness's
+[`docs/triage-protocol.md`](../fs-test-harness/docs/triage-protocol.md) for
+how to read a failure, and [`docs/multi-agent-protocol.md`](../fs-test-harness/docs/multi-agent-protocol.md)
+for running multiple agents against the same matrix.
+
 ## License
 
 GPL-3.0 — inherited from the WinFsp Rust bindings. The CLI alone (without the

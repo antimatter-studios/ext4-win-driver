@@ -1,0 +1,243 @@
+{
+  "_format": "v1",
+  "_doc": "ext4-win-driver matrix work list. See docs/test-harness.md. Each scenario name is unique. status starts at 'pending'; agents transition via scripts/claim-scenario.sh. Schema per scenario: image (file under EXT4_TEST_DISKS), mount_args (extra argv after `mount <image> --drive X:`), operations[] (typed verb list, see run-scenario.ps1), post_verify (optional 'fsck-ext4-strict' hook). Hashes captured from ext4 CLI on macOS against the canonical test images at /Volumes/sdcard256gb/projects/rust-fs-ext4/test-disks/.",
+  "scenarios": {
+    "basic-ro-list": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "mount_args": [],
+      "_attempts": [],
+      "_notes": "Smoke-test for read-only mount + readdir. Uses ext4 ls (CLI) so the same scenario also runs on macOS for cross-host parity if we ever wire that up.",
+      "ops": [
+        {
+          "type": "ls",
+          "path": "/",
+          "expect_names": [
+            ".",
+            "..",
+            "link.txt",
+            "lost+found",
+            "subdir",
+            "test.txt"
+          ]
+        },
+        {
+          "type": "ls",
+          "path": "/subdir",
+          "expect_names": [
+            ".",
+            "..",
+            "nested.txt"
+          ]
+        }
+      ]
+    },
+    "basic-ro-cat": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "mount_args": [],
+      "_attempts": [],
+      "_notes": "Verifies read content matches sha256 on a small inline-extent file plus a nested file.",
+      "ops": [
+        {
+          "type": "stat",
+          "path": "/test.txt",
+          "expect_size": 16,
+          "expect_mode": "0o644"
+        },
+        {
+          "type": "cat",
+          "path": "/test.txt",
+          "expect_size": 16,
+          "expect_sha256": "8ce9a8091ad255e6be4b7e9a48f324aea35eb6d9e552628cc139598d97779dee",
+          "expect_content": "hello from ext4\n"
+        },
+        {
+          "type": "cat",
+          "path": "/subdir/nested.txt",
+          "expect_size": 7,
+          "expect_sha256": "370a8c04b8a65bb4494275eec227f1b694db04c76da6b0b8ae88ed1ab19790a3"
+        }
+      ]
+    },
+    "basic-rw-write-readback": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "mount_args": [
+        "--rw"
+      ],
+      "_attempts": [],
+      "_notes": "Smallest end-to-end RW round-trip: create file via mounted drive, read it back via same mount. fsck-ext4-strict is requested; for v1 the actual fsck runs Mac-side after diag pull (see TODO in run-scenario.ps1 stage E).",
+      "ops": [
+        {
+          "type": "write",
+          "path": "/new.txt",
+          "content": "hello from windows"
+        },
+        {
+          "type": "cat",
+          "path": "/new.txt",
+          "via": "mount",
+          "expect_content": "hello from windows",
+          "expect_size": 18
+        }
+      ]
+    },
+    "basic-rw-mkdir-touch": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "mount_args": [
+        "--rw"
+      ],
+      "_attempts": [],
+      "_notes": "mkdir + create + readdir on the new dir. Catches issues with directory-block linkage on RW.",
+      "ops": [
+        {
+          "type": "mkdir",
+          "path": "/freshdir"
+        },
+        {
+          "type": "write",
+          "path": "/freshdir/inside.txt",
+          "content": "nested write"
+        },
+        {
+          "type": "ls",
+          "path": "/freshdir",
+          "expect_names": [
+            ".",
+            "..",
+            "inside.txt"
+          ]
+        },
+        {
+          "type": "cat",
+          "path": "/freshdir/inside.txt",
+          "via": "mount",
+          "expect_content": "nested write",
+          "expect_size": 12
+        }
+      ]
+    },
+    "htree-listing": {
+      "status": "pending",
+      "image": "ext4-htree.img",
+      "mount_args": [],
+      "_attempts": [],
+      "_notes": "Htree-indexed directory with 256 files + . + .. = 258 entries. Validates the htree iterator end-to-end.",
+      "ops": [
+        {
+          "type": "ls",
+          "path": "/",
+          "expect_names": [
+            ".",
+            "..",
+            "bigdir",
+            "lost+found",
+            "small.txt"
+          ]
+        },
+        {
+          "type": "ls",
+          "path": "/bigdir",
+          "expect_count": 258
+        }
+      ]
+    },
+    "deep-extents-cat": {
+      "status": "pending",
+      "image": "ext4-deep-extents.img",
+      "mount_args": [],
+      "_attempts": [],
+      "_notes": "Files backed by deeper extent trees. Hashes the read against the macOS-captured reference.",
+      "ops": [
+        {
+          "type": "ls",
+          "path": "/",
+          "expect_names": [
+            ".",
+            "..",
+            "dense.txt",
+            "lost+found",
+            "sparse.bin"
+          ]
+        },
+        {
+          "type": "stat",
+          "path": "/dense.txt",
+          "expect_size": 13
+        },
+        {
+          "type": "cat",
+          "path": "/dense.txt",
+          "expect_size": 13,
+          "expect_sha256": "48b29839ecd2a7f7da1326b867961ca050e46fa4035a5f1c7eee28b401646650"
+        }
+      ]
+    },
+    "inline-data-cat": {
+      "status": "pending",
+      "image": "ext4-inline.img",
+      "mount_args": [],
+      "_attempts": [],
+      "_notes": "Inline-data feature exercise. tiny.txt fits inside the inode.",
+      "ops": [
+        {
+          "type": "ls",
+          "path": "/",
+          "expect_names": [
+            ".",
+            "..",
+            "lost+found",
+            "medium.txt",
+            "symlink",
+            "tiny.txt"
+          ]
+        },
+        {
+          "type": "cat",
+          "path": "/tiny.txt",
+          "expect_size": 12,
+          "expect_sha256": "4fa141db5636666c4ba3402bcb80367f847a92174fce57f2b92e912af4411566"
+        }
+      ]
+    },
+    "xattr-getxattr": {
+      "status": "blocked-needs-getxattr-cli",
+      "image": "ext4-xattr.img",
+      "mount_args": [],
+      "_attempts": [],
+      "_notes": "Cannot fully exercise xattrs until ext4.exe grows a `getxattr` subcommand (or the WinFsp adapter exposes xattrs as Windows EAs / ADS). The ls-only operations[] above is a stub so the scenario shape is documented; actual unblock is to add a `getxattr` op type + CLI subcommand. Track in docs/test-harness.md.",
+      "ops": [
+        {
+          "type": "ls",
+          "path": "/",
+          "expect_names": [
+            ".",
+            "..",
+            "lost+found",
+            "plain.txt",
+            "tagged.txt",
+            "tagged_dir"
+          ]
+        }
+      ]
+    },
+    "whole-disk-with-part": {
+      "status": "blocked-needs-test-image-builder",
+      "image": "ext4-whole-disk.img",
+      "mount_args": [
+        "--part",
+        "1"
+      ],
+      "_attempts": [],
+      "_notes": "We don't currently ship a whole-disk (MBR/GPT-wrapped) test image in /Volumes/sdcard256gb/projects/rust-fs-ext4/test-disks/. The existing image-build code lived in earlier git history. Unblock = restore (or re-write) a small wrapper-image builder that produces ext4-whole-disk.img with one ext4 partition and seed it next to the other test disks. Then point this scenario at it.",
+      "ops": [
+        {
+          "type": "ls",
+          "path": "/"
+        }
+      ]
+    }
+  }
+}
