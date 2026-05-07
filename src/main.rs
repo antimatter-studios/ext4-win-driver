@@ -3,7 +3,7 @@
 //! Thin clap dispatcher; real work lives in [`cmd`].
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
 mod cmd;
@@ -16,48 +16,63 @@ struct Cli {
     cmd: Cmd,
 }
 
+/// Shared mount-source flags. `image` is the file or device path; `part`
+/// optionally selects the Nth (1-indexed) partition in a whole-disk image.
+#[derive(Args, Clone)]
+struct MountArgs {
+    /// Disk image, ext4 filesystem image, or (Windows) raw device.
+    image: PathBuf,
+    /// 1-indexed partition number when `image` is a whole-disk image.
+    /// See `ext4 parts <image>` for the partition list.
+    #[arg(long, short = 'p')]
+    part: Option<usize>,
+}
+
 #[derive(Subcommand)]
 enum Cmd {
     /// Print volume info (label, block size, free space, ...).
     Info {
-        image: PathBuf,
+        #[command(flatten)]
+        mt: MountArgs,
     },
     /// List directory entries.
     Ls {
-        image: PathBuf,
+        #[command(flatten)]
+        mt: MountArgs,
         #[arg(default_value = "/")]
         path: String,
     },
     /// Stat a single path.
     Stat {
-        image: PathBuf,
+        #[command(flatten)]
+        mt: MountArgs,
         path: String,
     },
     /// Print a file's contents to stdout.
     Cat {
-        image: PathBuf,
+        #[command(flatten)]
+        mt: MountArgs,
         path: String,
     },
     /// Recursive tree listing from /.
     Tree {
-        image: PathBuf,
+        #[command(flatten)]
+        mt: MountArgs,
         #[arg(long, default_value_t = 64)]
         max_depth: u32,
     },
     /// Inspect partition table (MBR/GPT) of a disk image or raw device.
-    Parts {
-        image: PathBuf,
-    },
+    Parts { image: PathBuf },
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Info { image } => cmd::info(&image),
-        Cmd::Ls { image, path } => cmd::ls(&image, &path),
-        Cmd::Stat { image, path } => cmd::stat(&image, &path),
-        Cmd::Cat { image, path } => cmd::cat(&image, &path),
-        Cmd::Tree { image, max_depth } => cmd::tree(&image, max_depth),
+        Cmd::Info { mt } => cmd::info(&mt),
+        Cmd::Ls { mt, path } => cmd::ls(&mt, &path),
+        Cmd::Stat { mt, path } => cmd::stat(&mt, &path),
+        Cmd::Cat { mt, path } => cmd::cat(&mt, &path),
+        Cmd::Tree { mt, max_depth } => cmd::tree(&mt, max_depth),
         Cmd::Parts { image } => cmd::parts(&image),
     }
 }

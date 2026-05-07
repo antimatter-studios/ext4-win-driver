@@ -2,44 +2,181 @@
 //!
 //! All filesystem access goes through the `fs_ext4_*` C ABI exposed by the
 //! `fs-ext4` library. The C ABI is the high-level surface of the library;
-//! Rust modules underneath are primitives. Using the C ABI keeps this file
-//! short and tracks any future improvements upstream automatically.
+//! Rust modules underneath are primitives.
 //!
-//! When partition / WinFsp support lands the mount path will switch to
-//! `fs_ext4_mount_with_callbacks` so a custom `BlockDevice` can be plugged in.
+//! Two mount paths:
+//!   - `Mount::open_direct` — `fs_ext4_mount(path)`, image must be a raw
+//!     ext4 filesystem.
+//!   - `Mount::open_partition` — opens the file ourselves and feeds the
+//!     C ABI a read callback that offset-shifts into the chosen GPT/MBR
+//!     partition. Used for whole-disk images and (later) Win32 raw devices.
 
 use anyhow::{Context, Result, anyhow, bail};
 use fs_ext4::capi::*;
 use std::ffi::{CStr, CString};
-use std::os::raw::c_void;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::os::raw::{c_int, c_void};
 use std::path::Path;
+use std::sync::Mutex;
 
+use crate::MountArgs;
 use crate::partition;
 
-/// RAII wrapper around `*mut fs_ext4_fs_t`. Frees with `fs_ext4_umount` on drop.
-struct Mount(*mut fs_ext4_fs_t);
+// ---------------------------------------------------------------------------
+// Mount handle
+// ---------------------------------------------------------------------------
+
+/// RAII wrapper around `*mut fs_ext4_fs_t`.
+///
+/// Frees the fs handle with `fs_ext4_umount` on drop, and (for callback
+/// mounts) reclaims the boxed callback context that was passed to the C
+/// ABI. Order matters — the fs must be unmounted before the context box
+/// is dropped, since `Filesystem::drop` may issue final reads.
+struct Mount {
+    fs: *mut fs_ext4_fs_t,
+    /// Set when mounted via `fs_ext4_mount_with_callbacks`. Owned here;
+    /// freed on drop.
+    cb_ctx: Option<*mut SliceCtx>,
+}
 
 impl Mount {
-    fn open(image: &Path) -> Result<Self> {
+    fn open(mt: &MountArgs) -> Result<Self> {
+        match mt.part {
+            None => Self::open_direct(&mt.image),
+            Some(n) => Self::open_partition(&mt.image, n),
+        }
+    }
+
+    fn open_direct(image: &Path) -> Result<Self> {
         let s = image
             .to_str()
             .ok_or_else(|| anyhow!("image path is not valid UTF-8: {image:?}"))?;
         let c = CString::new(s).context("image path contains NUL byte")?;
         let fs = unsafe { fs_ext4_mount(c.as_ptr()) };
         if fs.is_null() {
-            bail!("mount {image:?} failed: {}", last_err());
+            // If a partition table is sitting at the front, the user almost
+            // certainly meant to pass --part N; show them the layout.
+            let hint = match partition::list(image) {
+                Ok(parts) if !parts.is_empty() => {
+                    let mut s = String::from(
+                        "\nhint: this looks like a partitioned device. Try --part N:\n",
+                    );
+                    for (i, p) in parts.iter().enumerate() {
+                        s.push_str(&format!(
+                            "  {}: {} sectors @ LBA {} ({})\n",
+                            i + 1,
+                            p.num_sectors,
+                            p.start_lba,
+                            p.kind,
+                        ));
+                    }
+                    s
+                }
+                _ => String::new(),
+            };
+            bail!("mount {image:?} failed: {}{hint}", last_err());
         }
-        Ok(Self(fs))
+        Ok(Self { fs, cb_ctx: None })
+    }
+
+    fn open_partition(image: &Path, n: usize) -> Result<Self> {
+        let parts = partition::list(image)
+            .with_context(|| format!("listing partitions in {image:?}"))?;
+        if parts.is_empty() {
+            bail!("no partitions found in {image:?}");
+        }
+        if n == 0 || n > parts.len() {
+            bail!("--part {n} out of range (1..={})", parts.len());
+        }
+        let p = &parts[n - 1];
+        let f = File::open(image).with_context(|| format!("opening {image:?}"))?;
+
+        let ctx = Box::new(SliceCtx {
+            file: Mutex::new(f),
+            base: p.start_lba * 512,
+            len: p.num_sectors * 512,
+        });
+        let raw = Box::into_raw(ctx);
+
+        let cfg = fs_ext4_blockdev_cfg_t {
+            read: Some(slice_read_cb),
+            context: raw as *mut c_void,
+            size_bytes: unsafe { (*raw).len },
+            // 0 = let the driver discover from the superblock.
+            block_size: 0,
+            write: None,
+            flush: None,
+        };
+        let fs = unsafe { fs_ext4_mount_with_callbacks(&cfg) };
+        if fs.is_null() {
+            // Reclaim the box we leaked.
+            unsafe { drop(Box::from_raw(raw)) };
+            bail!("mount partition {n} ({}) failed: {}", p.kind, last_err());
+        }
+        Ok(Self {
+            fs,
+            cb_ctx: Some(raw),
+        })
     }
 }
 
 impl Drop for Mount {
     fn drop(&mut self) {
-        if !self.0.is_null() {
-            unsafe { fs_ext4_umount(self.0) };
+        if !self.fs.is_null() {
+            unsafe { fs_ext4_umount(self.fs) };
+            self.fs = std::ptr::null_mut();
+        }
+        if let Some(raw) = self.cb_ctx.take() {
+            unsafe { drop(Box::from_raw(raw)) };
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Slice (partition-shimmed) callback context
+// ---------------------------------------------------------------------------
+
+struct SliceCtx {
+    file: Mutex<File>,
+    base: u64,
+    len: u64,
+}
+
+extern "C" fn slice_read_cb(
+    ctx: *mut c_void,
+    buf: *mut c_void,
+    offset: u64,
+    length: u64,
+) -> c_int {
+    if ctx.is_null() || buf.is_null() {
+        return -1;
+    }
+    let ctx = unsafe { &*(ctx as *const SliceCtx) };
+    let Some(end) = offset.checked_add(length) else {
+        return -1;
+    };
+    if end > ctx.len {
+        return -1;
+    }
+    let abs = ctx.base + offset;
+    let mut f = match ctx.file.lock() {
+        Ok(g) => g,
+        Err(_) => return -1,
+    };
+    if f.seek(SeekFrom::Start(abs)).is_err() {
+        return -1;
+    }
+    let slice = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, length as usize) };
+    if f.read_exact(slice).is_err() {
+        return -1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 fn last_err() -> String {
     unsafe {
@@ -62,7 +199,6 @@ fn cchar_slice_to_string(buf: &[std::os::raw::c_char]) -> String {
 
 fn ftype_str(ft: u8) -> &'static str {
     match ft {
-        0 => "?",
         1 => "f",
         2 => "d",
         3 => "c",
@@ -89,10 +225,10 @@ fn format_uuid(u: &[u8; 16]) -> String {
 // info
 // ---------------------------------------------------------------------------
 
-pub fn info(image: &Path) -> Result<()> {
-    let m = Mount::open(image)?;
+pub fn info(mt: &MountArgs) -> Result<()> {
+    let m = Mount::open(mt)?;
     let mut vi: fs_ext4_volume_info_t = unsafe { std::mem::zeroed() };
-    let r = unsafe { fs_ext4_get_volume_info(m.0, &mut vi) };
+    let r = unsafe { fs_ext4_get_volume_info(m.fs, &mut vi) };
     if r != 0 {
         bail!("fs_ext4_get_volume_info failed: {}", last_err());
     }
@@ -121,7 +257,10 @@ pub fn info(image: &Path) -> Result<()> {
         "free:           {free_bytes} bytes ({} blocks)",
         vi.free_blocks
     );
-    println!("inodes:         {} total, {} free", vi.total_inodes, vi.free_inodes);
+    println!(
+        "inodes:         {} total, {} free",
+        vi.total_inodes, vi.free_inodes
+    );
     println!("inode_size:     {}", vi.inode_size);
     println!("rev:            {}.{}", vi.rev_level, vi.minor_rev_level);
     println!("feat_compat:    0x{:08x}", vi.feature_compat);
@@ -143,10 +282,10 @@ pub fn info(image: &Path) -> Result<()> {
 // ls
 // ---------------------------------------------------------------------------
 
-pub fn ls(image: &Path, path: &str) -> Result<()> {
-    let m = Mount::open(image)?;
+pub fn ls(mt: &MountArgs, path: &str) -> Result<()> {
+    let m = Mount::open(mt)?;
     let cp = CString::new(path).context("path contains NUL byte")?;
-    let iter = unsafe { fs_ext4_dir_open(m.0, cp.as_ptr()) };
+    let iter = unsafe { fs_ext4_dir_open(m.fs, cp.as_ptr()) };
     if iter.is_null() {
         bail!("dir_open({path:?}) failed: {}", last_err());
     }
@@ -176,11 +315,11 @@ pub fn ls(image: &Path, path: &str) -> Result<()> {
 // stat
 // ---------------------------------------------------------------------------
 
-pub fn stat(image: &Path, path: &str) -> Result<()> {
-    let m = Mount::open(image)?;
+pub fn stat(mt: &MountArgs, path: &str) -> Result<()> {
+    let m = Mount::open(mt)?;
     let cp = CString::new(path).context("path contains NUL byte")?;
     let mut attr: fs_ext4_attr_t = unsafe { std::mem::zeroed() };
-    let r = unsafe { fs_ext4_stat(m.0, cp.as_ptr(), &mut attr) };
+    let r = unsafe { fs_ext4_stat(m.fs, cp.as_ptr(), &mut attr) };
     if r != 0 {
         bail!("stat({path:?}) failed: {}", last_err());
     }
@@ -202,14 +341,14 @@ pub fn stat(image: &Path, path: &str) -> Result<()> {
 // cat
 // ---------------------------------------------------------------------------
 
-pub fn cat(image: &Path, path: &str) -> Result<()> {
+pub fn cat(mt: &MountArgs, path: &str) -> Result<()> {
     use std::io::Write;
 
-    let m = Mount::open(image)?;
+    let m = Mount::open(mt)?;
     let cp = CString::new(path).context("path contains NUL byte")?;
 
     let mut attr: fs_ext4_attr_t = unsafe { std::mem::zeroed() };
-    if unsafe { fs_ext4_stat(m.0, cp.as_ptr(), &mut attr) } != 0 {
+    if unsafe { fs_ext4_stat(m.fs, cp.as_ptr(), &mut attr) } != 0 {
         bail!("stat({path:?}) failed: {}", last_err());
     }
     if attr.size == 0 {
@@ -223,7 +362,7 @@ pub fn cat(image: &Path, path: &str) -> Result<()> {
         let want = std::cmp::min(buf.len() as u64, attr.size - offset);
         let n = unsafe {
             fs_ext4_read_file(
-                m.0,
+                m.fs,
                 cp.as_ptr(),
                 buf.as_mut_ptr() as *mut c_void,
                 offset,
@@ -246,8 +385,8 @@ pub fn cat(image: &Path, path: &str) -> Result<()> {
 // tree
 // ---------------------------------------------------------------------------
 
-pub fn tree(image: &Path, max_depth: u32) -> Result<()> {
-    let m = Mount::open(image)?;
+pub fn tree(mt: &MountArgs, max_depth: u32) -> Result<()> {
+    let m = Mount::open(mt)?;
     println!("/");
     walk(&m, "/", 0, max_depth)
 }
@@ -257,7 +396,7 @@ fn walk(m: &Mount, dir: &str, depth: u32, max_depth: u32) -> Result<()> {
         return Ok(());
     }
     let cp = CString::new(dir).context("path contains NUL byte")?;
-    let iter = unsafe { fs_ext4_dir_open(m.0, cp.as_ptr()) };
+    let iter = unsafe { fs_ext4_dir_open(m.fs, cp.as_ptr()) };
     if iter.is_null() {
         eprintln!("  (dir_open({dir:?}) failed: {})", last_err());
         return Ok(());
@@ -308,7 +447,10 @@ pub fn parts(image: &Path) -> Result<()> {
         println!("no partitions found");
         return Ok(());
     }
-    println!("{:>3} {:>16} {:>16} {:>10} {}", "#", "start (LBA)", "size (sectors)", "type", "name");
+    println!(
+        "{:>3} {:>16} {:>16} {:>10} {}",
+        "#", "start (LBA)", "size (sectors)", "type", "name"
+    );
     for (i, p) in parts.iter().enumerate() {
         println!(
             "{:>3} {:>16} {:>16} {:>10} {}",
