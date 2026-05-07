@@ -10,6 +10,7 @@ mod cmd;
 mod device;
 mod mount;
 mod partition;
+mod watch;
 
 #[derive(Parser)]
 #[command(name = "ext4", about = "Browse and (eventually) mount ext4 volumes on Windows")]
@@ -75,6 +76,10 @@ enum Cmd {
         #[arg(long)]
         drive: String,
     },
+    /// Watch for ext4 volumes plugging in (SD cards, USB drives) and
+    /// auto-mount them by spawning `ext4 mount` as a child process.
+    /// Windows-only; on other targets prints a hint and exits.
+    Watch,
 }
 
 fn main() -> Result<()> {
@@ -91,5 +96,6 @@ fn main() -> Result<()> {
             let m = mount::Mount::open(&mt)?;
             mount::run(m, &drive)
         }
+        Cmd::Watch => watch::run(),
     }
 }

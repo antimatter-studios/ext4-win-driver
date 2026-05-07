@@ -21,11 +21,19 @@ anyhow = "1"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
     "Win32_Storage_FileSystem",
     "Win32_System_IO",
     "Win32_System_Ioctl",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
     "Win32_Security",
+    "Win32_UI_WindowsAndMessaging",
 ] }
+# `watch` subcommand uses ctrlc on Windows. Pulled in unconditionally on
+# Windows so `watch` builds without the `mount` feature; on non-Windows
+# targets `watch` is a stub and ctrlc isn't needed.
+ctrlc = "3"
 # WinFsp + helpers. Optional + Windows-target-only — pulled in when the
 # `mount` feature is enabled AND the build target is Windows. On macOS
 # the `mount` feature does nothing (the cfg-gated module is empty).
@@ -41,7 +49,6 @@ windows = { version = "0.61", features = [
 ], optional = true }
 winfsp-sys = { path = "../winfsp-rs/winfsp-sys", optional = true }
 widestring = { version = "1", optional = true }
-ctrlc = { version = "3", optional = true }
 
 [target.'cfg(windows)'.build-dependencies]
 # Only used when the `mount` feature is on; build.rs guards the call.
@@ -53,7 +60,7 @@ default = []
 # Enables the `mount` subcommand (WinFsp driver). Active only on Windows
 # — on other targets the deps don't resolve and the cfg-gated code is
 # absent.
-mount = ["dep:winfsp", "dep:winfsp-sys", "dep:windows", "dep:widestring", "dep:ctrlc"]
+mount = ["dep:winfsp", "dep:winfsp-sys", "dep:windows", "dep:widestring"]
 
 [profile.release]
 lto = true
