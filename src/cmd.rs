@@ -1,181 +1,24 @@
 //! Subcommand implementations.
 //!
-//! All filesystem access goes through the `fs_ext4_*` C ABI exposed by the
-//! `fs-ext4` library. The C ABI is the high-level surface of the library;
-//! Rust modules underneath are primitives.
-//!
-//! Two mount paths:
-//!   - `Mount::open_direct` — `fs_ext4_mount(path)`, image must be a raw
-//!     ext4 filesystem.
-//!   - `Mount::open_partition` — opens the file ourselves and feeds the
-//!     C ABI a read callback that offset-shifts into the chosen GPT/MBR
-//!     partition. Used for whole-disk images and (later) Win32 raw devices.
+//! Filesystem access goes through `Mount` (in [`crate::mount`]), which
+//! wraps the `fs_ext4_*` C ABI. Each subcommand opens a `Mount`, calls a
+//! few C ABI functions, prints, and drops.
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use fs_ext4::capi::*;
 use std::ffi::{CStr, CString};
-use std::os::raw::{c_int, c_void};
+use std::os::raw::c_void;
 use std::path::Path;
-use std::sync::Arc;
 
 use crate::MountArgs;
-use crate::device::{BlockSource, FileSource};
+use crate::mount::Mount;
 use crate::partition;
-
-// ---------------------------------------------------------------------------
-// Mount handle
-// ---------------------------------------------------------------------------
-
-/// RAII wrapper around `*mut fs_ext4_fs_t`.
-///
-/// Frees the fs handle with `fs_ext4_umount` on drop, and (for callback
-/// mounts) reclaims the boxed callback context that was passed to the C
-/// ABI. Order matters — the fs must be unmounted before the context box
-/// is dropped, since `Filesystem::drop` may issue final reads.
-struct Mount {
-    fs: *mut fs_ext4_fs_t,
-    /// Set when mounted via `fs_ext4_mount_with_callbacks`. Owned here;
-    /// freed on drop.
-    cb_ctx: Option<*mut SliceCtx>,
-}
-
-impl Mount {
-    fn open(mt: &MountArgs) -> Result<Self> {
-        match mt.part {
-            None => Self::open_direct(&mt.image),
-            Some(n) => Self::open_partition(&mt.image, n),
-        }
-    }
-
-    fn open_direct(image: &Path) -> Result<Self> {
-        let s = image
-            .to_str()
-            .ok_or_else(|| anyhow!("image path is not valid UTF-8: {image:?}"))?;
-        let c = CString::new(s).context("image path contains NUL byte")?;
-        let fs = unsafe { fs_ext4_mount(c.as_ptr()) };
-        if fs.is_null() {
-            // If a partition table is sitting at the front, the user almost
-            // certainly meant to pass --part N; show them the layout.
-            let hint = match partition::list(image) {
-                Ok(parts) if !parts.is_empty() => {
-                    let mut s = String::from(
-                        "\nhint: this looks like a partitioned device. Try --part N:\n",
-                    );
-                    for (i, p) in parts.iter().enumerate() {
-                        s.push_str(&format!(
-                            "  {}: {} sectors @ LBA {} ({})\n",
-                            i + 1,
-                            p.num_sectors,
-                            p.start_lba,
-                            p.kind,
-                        ));
-                    }
-                    s
-                }
-                _ => String::new(),
-            };
-            bail!("mount {image:?} failed: {}{hint}", last_err());
-        }
-        Ok(Self { fs, cb_ctx: None })
-    }
-
-    fn open_partition(image: &Path, n: usize) -> Result<Self> {
-        let src: Arc<dyn BlockSource> = Arc::new(FileSource::open(image)?);
-        let parts = partition::list_from_source(src.as_ref())
-            .with_context(|| format!("listing partitions in {image:?}"))?;
-        if parts.is_empty() {
-            bail!("no partitions found in {image:?}");
-        }
-        if n == 0 || n > parts.len() {
-            bail!("--part {n} out of range (1..={})", parts.len());
-        }
-        let p = &parts[n - 1];
-        let base = p.start_lba * 512;
-        let len = p.num_sectors * 512;
-        let end = base
-            .checked_add(len)
-            .ok_or_else(|| anyhow!("partition geometry overflows u64"))?;
-        if end > src.size() {
-            bail!(
-                "partition {n} extends past device end: {end} > {} bytes",
-                src.size()
-            );
-        }
-
-        let ctx = Box::new(SliceCtx { src, base, len });
-        let raw = Box::into_raw(ctx);
-
-        let cfg = fs_ext4_blockdev_cfg_t {
-            read: Some(slice_read_cb),
-            context: raw as *mut c_void,
-            size_bytes: unsafe { (*raw).len },
-            // 0 = let the driver discover from the superblock.
-            block_size: 0,
-            write: None,
-            flush: None,
-        };
-        let fs = unsafe { fs_ext4_mount_with_callbacks(&cfg) };
-        if fs.is_null() {
-            unsafe { drop(Box::from_raw(raw)) };
-            bail!("mount partition {n} ({}) failed: {}", p.kind, last_err());
-        }
-        Ok(Self {
-            fs,
-            cb_ctx: Some(raw),
-        })
-    }
-}
-
-impl Drop for Mount {
-    fn drop(&mut self) {
-        if !self.fs.is_null() {
-            unsafe { fs_ext4_umount(self.fs) };
-            self.fs = std::ptr::null_mut();
-        }
-        if let Some(raw) = self.cb_ctx.take() {
-            unsafe { drop(Box::from_raw(raw)) };
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Slice (partition-shimmed) callback context
-// ---------------------------------------------------------------------------
-
-struct SliceCtx {
-    src: Arc<dyn BlockSource>,
-    base: u64,
-    len: u64,
-}
-
-extern "C" fn slice_read_cb(
-    ctx: *mut c_void,
-    buf: *mut c_void,
-    offset: u64,
-    length: u64,
-) -> c_int {
-    if ctx.is_null() || buf.is_null() {
-        return -1;
-    }
-    let ctx = unsafe { &*(ctx as *const SliceCtx) };
-    let Some(end) = offset.checked_add(length) else {
-        return -1;
-    };
-    if end > ctx.len {
-        return -1;
-    }
-    let slice = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, length as usize) };
-    if ctx.src.read_at(ctx.base + offset, slice).is_err() {
-        return -1;
-    }
-    0
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn last_err() -> String {
+pub(crate) fn last_err() -> String {
     unsafe {
         let p = fs_ext4_last_error();
         if p.is_null() {

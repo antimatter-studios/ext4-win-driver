@@ -16,12 +16,14 @@ distribution unit.
 
 ## Status
 
-- [x] CLI scaffold
-- [ ] MBR/GPT partition parsing
-- [ ] Win32 raw-device `BlockDevice` impl
+- [x] CLI scaffold (`info`, `ls`, `stat`, `cat`, `tree`, `parts`)
+- [x] MBR/GPT partition parsing
+- [x] `--part N` mounts a partition via the C ABI's callback mount
+- [x] Win32 raw-device support (`\\.\X:`, `\\.\PhysicalDriveN`) — cfg-gated,
+      validated via `cargo check --target x86_64-pc-windows-gnu`
 - [ ] WinFsp read-only mount
 - [ ] WinFsp read-write mount
-- [ ] MSI installer
+- [ ] MSI installer (bundles WinFsp)
 
 ## Usage (current)
 

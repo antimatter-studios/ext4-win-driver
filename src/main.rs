@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 mod cmd;
 mod device;
+mod mount;
 mod partition;
 
 #[derive(Parser)]
@@ -64,6 +65,16 @@ enum Cmd {
     },
     /// Inspect partition table (MBR/GPT) of a disk image or raw device.
     Parts { image: PathBuf },
+    /// Mount the filesystem on a Windows drive letter via WinFsp (RO).
+    /// Requires the `mount` feature and a Windows host.
+    #[cfg(all(windows, feature = "mount"))]
+    Mount {
+        #[command(flatten)]
+        mt: MountArgs,
+        /// Drive letter (`X:`) or empty directory to mount on.
+        #[arg(long)]
+        drive: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -75,5 +86,10 @@ fn main() -> Result<()> {
         Cmd::Cat { mt, path } => cmd::cat(&mt, &path),
         Cmd::Tree { mt, max_depth } => cmd::tree(&mt, max_depth),
         Cmd::Parts { image } => cmd::parts(&image),
+        #[cfg(all(windows, feature = "mount"))]
+        Cmd::Mount { mt, drive } => {
+            let m = mount::Mount::open(&mt)?;
+            mount::run(m, &drive)
+        }
     }
 }
