@@ -5,36 +5,76 @@ library.
 
 Scope:
 
-1. **CLI browser** — open an ext4 image or raw device, list/stat/read files
-   without root mounting anything. Cross-platform (works on macOS/Linux too,
-   useful for testing).
-2. **WinFsp driver** *(planned)* — mount an ext4 partition as a real Windows
-   drive letter via [WinFsp](https://github.com/winfsp/winfsp).
+1. **CLI browser** — open an ext4 image or raw device; list/stat/read files
+   without mounting. Cross-platform (works on macOS/Linux too — useful for
+   testing).
+2. **WinFsp driver** — mount an ext4 partition as a real Windows drive letter
+   via [WinFsp](https://github.com/winfsp/winfsp). Read-only today,
+   read-write to follow.
 
-The library lives at `../rust-fs-ext4` and is path-depended; this crate is the
-distribution unit.
+The `fs-ext4` library lives at `../rust-fs-ext4` and is path-depended; this
+crate is the distribution unit.
 
 ## Status
 
-- [x] CLI scaffold (`info`, `ls`, `stat`, `cat`, `tree`, `parts`)
-- [x] MBR/GPT partition parsing
-- [x] `--part N` mounts a partition via the C ABI's callback mount
-- [x] Win32 raw-device support (`\\.\X:`, `\\.\PhysicalDriveN`) — cfg-gated,
-      validated via `cargo check --target x86_64-pc-windows-gnu`
-- [ ] WinFsp read-only mount
+- [x] CLI: `info`, `ls`, `stat`, `cat`, `tree`, `parts`
+- [x] MBR/GPT partition parsing (5 unit tests)
+- [x] `--part N` mounts a partition slice via the C ABI's callback mount
+- [x] Win32 raw-device support (`\\.\X:`, `\\.\PhysicalDriveN`)
+- [x] **WinFsp read-only mount** — verified end-to-end on Windows 11 ARM64
 - [ ] WinFsp read-write mount
 - [ ] MSI installer (bundles WinFsp)
 
-## Usage (current)
+## Usage
+
+CLI (works on any host):
 
 ```
-ext4 info  <image>
-ext4 ls    <image> <path>
-ext4 stat  <image> <path>
-ext4 cat   <image> <path>
-ext4 tree  <image>
+ext4 info   <image>                        # volume label, sizes, features
+ext4 ls     <image> [path]                 # directory listing
+ext4 stat   <image> <path>
+ext4 cat    <image> <path>
+ext4 tree   <image>
+ext4 parts  <image>                        # MBR/GPT partition table
+ext4 ls     <whole-disk.img> --part 1 /    # browse partition 1
 ```
 
-`<image>` is a path to a raw ext4 filesystem image (no partition table). On
-Windows, raw-device support (`\\.\X:`, `\\.\PhysicalDriveN`) and partition
-selection land in subsequent iterations.
+WinFsp mount (Windows + `mount` feature):
+
+```
+ext4 mount <image> --drive X:
+```
+
+Then browse `X:` in Explorer, or `Get-ChildItem X:\`, etc. Ctrl-C to unmount.
+
+## Build
+
+CLI only (any platform):
+
+```
+cargo build --release
+```
+
+With WinFsp mount (Windows only):
+
+```
+cargo build --release --features mount
+```
+
+### WinFsp build prerequisites
+
+- **WinFsp 2.1+** installed on the build/run machine
+  ([winfsp.dev](https://winfsp.dev/) → MSI, or `winget install WinFsp.WinFsp`).
+- For ARM64 / `aarch64-pc-windows-gnullvm` targets, a forked
+  [winfsp-rs](https://github.com/SnowflakePowered/winfsp-rs) is path-depended
+  at `../winfsp-rs` (gnullvm support patches; upstream PR pending). The fork
+  also requires:
+  - `LLVM` for `libclang.dll` (`winget install LLVM.LLVM`)
+  - LLVM-MinGW (`winget install MartinStorsjo.LLVM-MinGW.UCRT`)
+- `LIBCLANG_PATH=C:\Program Files\LLVM\bin` so bindgen can find `libclang.dll`.
+
+## License
+
+GPL-3.0 — inherited from the WinFsp Rust bindings. The CLI alone (without the
+`mount` feature) doesn't link winfsp and could be relicensed if split out, but
+the single-license declaration keeps the distribution unit simple.
