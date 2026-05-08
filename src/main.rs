@@ -91,7 +91,7 @@ enum Cmd {
         max_entries_per_dir: u32,
     },
     /// Mount the filesystem on a Windows drive letter via WinFsp.
-    /// Defaults to read-only; pass `--rw` for read-write. Requires the
+    /// Defaults to read-write; pass `--ro` for read-only. Requires the
     /// `mount` feature and a Windows host.
     #[cfg(all(windows, feature = "mount"))]
     Mount {
@@ -100,8 +100,13 @@ enum Cmd {
         /// Drive letter (`X:`) or empty directory to mount on.
         #[arg(long)]
         drive: String,
-        /// Mount read-write (default = read-only).
-        #[arg(long)]
+        /// Mount read-only.
+        #[arg(long, conflicts_with = "rw")]
+        ro: bool,
+        /// Explicit read-write opt-in. Now the default; accepted for
+        /// back-compat with scripts and harness configs that pre-date
+        /// the flip.
+        #[arg(long, conflicts_with = "ro")]
         rw: bool,
     },
     /// Watch for ext4 volumes plugging in (SD cards, USB drives) and
@@ -133,11 +138,16 @@ fn main() -> Result<()> {
             max_entries_per_dir,
         } => cmd::audit(&mt, max_dirs, max_entries_per_dir),
         #[cfg(all(windows, feature = "mount"))]
-        Cmd::Mount { mt, drive, rw } => {
-            let m = if rw {
-                mount::Mount::open_rw(&mt)?
-            } else {
+        Cmd::Mount {
+            mt,
+            drive,
+            ro,
+            rw: _, // accepted for back-compat; RW is now the default
+        } => {
+            let m = if ro {
                 mount::Mount::open(&mt)?
+            } else {
+                mount::Mount::open_rw(&mt)?
             };
             mount::run(m, &drive)
         }

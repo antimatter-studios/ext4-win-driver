@@ -19,9 +19,15 @@
 .PARAMETER Part
   1-indexed partition number for whole-disk images. Optional.
 
+.PARAMETER ReadOnly
+  Mount read-only. Default is read-write -- pass this switch when you
+  want to be sure nothing on the disk gets touched (forensics, damaged
+  filesystem inspection, etc).
+
 .EXAMPLE
   Mount-Ext4.ps1 C:\images\rootfs.img
   Mount-Ext4.ps1 -ImagePath disk.img -DriveLetter Y: -Part 1
+  Mount-Ext4.ps1 -ImagePath disk.img -ReadOnly  # safe inspection mode
   Mount-Ext4.ps1                                # opens file picker
 #>
 
@@ -34,7 +40,10 @@ param(
     [string]$DriveLetter,
 
     [Parameter()]
-    [int]$Part
+    [int]$Part,
+
+    [Parameter()]
+    [switch]$ReadOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -104,8 +113,12 @@ $args = @('mount', $ImagePath, '--drive', $DriveLetter)
 if ($PSBoundParameters.ContainsKey('Part')) {
     $args += @('--part', "$Part")
 }
+if ($ReadOnly) {
+    $args += '--ro'
+}
 
-Write-Host "Mounting $ImagePath at $DriveLetter ..."
+$mode = if ($ReadOnly) { 'read-only' } else { 'read-write' }
+Write-Host "Mounting $ImagePath at $DriveLetter ($mode) ..."
 Write-Host "Ctrl-C in this window to unmount."
 Write-Host ""
 
