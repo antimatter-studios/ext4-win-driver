@@ -26,6 +26,7 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_IO",
     "Win32_System_Ioctl",
     "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
     "Win32_System_Threading",
     "Win32_Security",
     "Win32_UI_WindowsAndMessaging",
@@ -50,6 +51,10 @@ windows = { version = "0.61", features = [
 ], optional = true }
 winfsp-sys = { path = "vendor/winfsp-rs/winfsp-sys", optional = true }
 widestring = { version = "1", optional = true }
+# `service` subcommand: SCM dispatcher + control-handler glue. Optional
+# + Windows-target-only (the crate's only platform). Pulled in by the
+# `service` feature; on macOS the cfg-gated module compiles to a stub.
+windows-service = { version = "0.7", optional = true }
 
 [target.'cfg(windows)'.build-dependencies]
 # Only used when the `mount` feature is on; build.rs guards the call.
@@ -62,6 +67,12 @@ default = []
 # — on other targets the deps don't resolve and the cfg-gated code is
 # absent.
 mount = ["dep:winfsp", "dep:winfsp-sys", "dep:windows", "dep:widestring"]
+# Enables the `service` subcommand (Windows Service variant of the
+# auto-mount watcher). Pulls in `windows-service` for the SCM
+# dispatcher. Independent of `mount` — the service shells out to
+# `launchctl-<arch>.exe` rather than linking WinFsp itself. On
+# non-Windows the subcommand handler is a stub.
+service = ["dep:windows-service"]
 
 [profile.release]
 lto = true
