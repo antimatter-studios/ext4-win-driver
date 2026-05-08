@@ -1,0 +1,51 @@
+# harness.toml — fs-test-harness consumer config for ext4-win-driver.
+#
+# The harness scripts + Rust runner live at ./harness/, vendored as a
+# git submodule from https://github.com/antimatter-studios/fs-test-harness.
+# Run `git submodule update --init --recursive` after cloning.
+
+[project]
+name        = "ext4-win-driver"
+binary      = "target/release/ext4.exe"
+matrix_path = "test-matrix.json"
+
+[vm]
+host           = "chris@192.168.213.145"
+ssh_key        = "../diskjockey/vendor/rust-fs-ntfs/privatekey"
+workdir        = "C:/Users/chris/dev/ext4-work"
+image_dir      = "../rust-fs-ext4/test-disks"
+rust_toolchain = "stable-aarch64-pc-windows-gnullvm"
+# winfsp + LLVM-MinGW + LLVM (libclang) are prerequisites; see README's
+# "WinFsp build prerequisites" section. setup-windows-vm.ps1 handles
+# the rustup pieces; the user installs WinFsp + LLVM via winget once.
+packages = [
+    "MartinStorsjo.LLVM-MinGW.UCRT",
+    "LLVM.LLVM",
+]
+# bindgen needs libclang to parse winfsp.h.
+env_prefix = "$env:LIBCLANG_PATH = 'C:\\Program Files\\LLVM\\bin';"
+
+[tools]
+# Optional. fsck.ext4 isn't on the Windows VM today; post-verify hooks
+# referencing {tools.fsck} are stubbed out via [post_verify] until we
+# wire a Mac-side post-pull fsck into test-windows-matrix.sh.
+# fsck = "fsck.ext4 -fn"
+
+[ops]
+# {extra} carries per-op CLI flags (e.g. `--part 1` for whole-disk
+# images). Empty by default; set per scenario via the op's `extra`
+# field.
+ls   = "{binary} ls   {image} {path} {extra}"
+cat  = "{binary} cat  {image} {path} {extra}"
+stat = "{binary} stat {image} {path} {extra}"
+tree = "{binary} tree {image} {extra}"
+parts = "{binary} parts {image}"
+info  = "{binary} info  {image}"
+
+[mount]
+# WinFsp mount, foreground. The runner kills the background process on
+# scenario teardown; ready_line tells the harness when to start running
+# scenario ops against the live mount.
+command    = "{binary} mount {image} --drive {drive} {extra}"
+ready_line = "ext4 mounted at"
+rw_extra   = "--rw"

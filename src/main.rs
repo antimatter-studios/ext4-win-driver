@@ -10,6 +10,7 @@ mod cmd;
 mod device;
 mod mount;
 mod partition;
+mod watch;
 
 #[derive(Parser)]
 #[command(name = "ext4", about = "Browse and (eventually) mount ext4 volumes on Windows")]
@@ -65,8 +66,9 @@ enum Cmd {
     },
     /// Inspect partition table (MBR/GPT) of a disk image or raw device.
     Parts { image: PathBuf },
-    /// Mount the filesystem on a Windows drive letter via WinFsp (RO).
-    /// Requires the `mount` feature and a Windows host.
+    /// Mount the filesystem on a Windows drive letter via WinFsp.
+    /// Defaults to read-only; pass `--rw` for read-write. Requires the
+    /// `mount` feature and a Windows host.
     #[cfg(all(windows, feature = "mount"))]
     Mount {
         #[command(flatten)]
@@ -74,7 +76,14 @@ enum Cmd {
         /// Drive letter (`X:`) or empty directory to mount on.
         #[arg(long)]
         drive: String,
+        /// Mount read-write (default = read-only).
+        #[arg(long)]
+        rw: bool,
     },
+    /// Watch for ext4 volumes plugging in (SD cards, USB drives) and
+    /// auto-mount them by spawning `ext4 mount` as a child process.
+    /// Windows-only; on other targets prints a hint and exits.
+    Watch,
 }
 
 fn main() -> Result<()> {
@@ -87,9 +96,14 @@ fn main() -> Result<()> {
         Cmd::Tree { mt, max_depth } => cmd::tree(&mt, max_depth),
         Cmd::Parts { image } => cmd::parts(&image),
         #[cfg(all(windows, feature = "mount"))]
-        Cmd::Mount { mt, drive } => {
-            let m = mount::Mount::open(&mt)?;
+        Cmd::Mount { mt, drive, rw } => {
+            let m = if rw {
+                mount::Mount::open_rw(&mt)?
+            } else {
+                mount::Mount::open(&mt)?
+            };
             mount::run(m, &drive)
         }
+        Cmd::Watch => watch::run(),
     }
 }

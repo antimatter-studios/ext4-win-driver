@@ -22,7 +22,11 @@ crate is the distribution unit.
 - [x] `--part N` mounts a partition slice via the C ABI's callback mount
 - [x] Win32 raw-device support (`\\.\X:`, `\\.\PhysicalDriveN`)
 - [x] **WinFsp read-only mount** — verified end-to-end on Windows 11 ARM64
-- [ ] WinFsp read-write mount
+- [x] **WinFsp read-write mount** (`--rw`) — create/write/truncate/rename/
+      unlink/rmdir/mkdir/utimens wired through to the C ABI. v1 caveat:
+      `write` round-trips the whole file (the underlying ABI is a "save-as"
+      replace), so large-file workloads are slow until a positional
+      `pwrite` lands in `fs-ext4`.
 - [ ] MSI installer (bundles WinFsp)
 
 ## Usage
@@ -42,7 +46,8 @@ ext4 ls     <whole-disk.img> --part 1 /    # browse partition 1
 WinFsp mount (Windows + `mount` feature):
 
 ```
-ext4 mount <image> --drive X:
+ext4 mount <image> --drive X:           # read-only (default)
+ext4 mount <image> --drive X: --rw      # read-write
 ```
 
 Then browse `X:` in Explorer, or `Get-ChildItem X:\`, etc. Ctrl-C to unmount.
@@ -72,6 +77,43 @@ cargo build --release --features mount
   - `LLVM` for `libclang.dll` (`winget install LLVM.LLVM`)
   - LLVM-MinGW (`winget install MartinStorsjo.LLVM-MinGW.UCRT`)
 - `LIBCLANG_PATH=C:\Program Files\LLVM\bin` so bindgen can find `libclang.dll`.
+
+## Testing
+
+Scenarios live in [`test-matrix.json`](./test-matrix.json) and the per-project
+adapter config in [`harness.toml`](./harness.toml). Both are consumed by the
+shared [`fs-test-harness`](https://github.com/antimatter-studios/fs-test-harness)
+vendored as a git submodule at [`harness/`](./harness).
+
+After cloning, initialise the submodule:
+
+```sh
+git submodule update --init --recursive
+```
+
+One-time VM setup, on the Mac:
+
+```sh
+bash harness/scripts/setup-local.sh        # writes .test-env
+```
+
+Run a scenario end-to-end (Mac → SSH → Windows VM → diag pull):
+
+```sh
+bash harness/scripts/test-windows-matrix.sh basic-ro-list
+```
+
+Diagnostics land under `test-diagnostics/run-<UTC>/`. See the harness's
+[`docs/triage-protocol.md`](./harness/docs/triage-protocol.md) for how to
+read a failure, and [`docs/multi-agent-protocol.md`](./harness/docs/multi-agent-protocol.md)
+for running multiple agents against the same matrix.
+
+To update the harness when the upstream releases:
+
+```sh
+git submodule update --remote --merge harness
+git add harness && git commit -m "chore: bump harness submodule"
+```
 
 ## License
 

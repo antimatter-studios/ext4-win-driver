@@ -21,9 +21,28 @@ use std::path::Path;
 
 /// Random-access read source. `Send + Sync` so it can sit behind an `Arc`
 /// shared between the CLI and the C ABI's read callback.
+///
+/// `write_at` and `flush` are optional. The default impls return an error
+/// so existing read-only impls don't need to change. Implementors that
+/// open the underlying handle for write should override them.
 pub trait BlockSource: Send + Sync {
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> std::io::Result<()>;
     fn size(&self) -> u64;
+
+    /// Write `buf` at `offset`. Default = NotConnected so a RW callback
+    /// fed a read-only `BlockSource` fails fast instead of corrupting.
+    fn write_at(&self, _offset: u64, _buf: &[u8]) -> std::io::Result<()> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "write_at: BlockSource is read-only",
+        ))
+    }
+
+    /// Flush buffered writes to the underlying device. Default = no-op
+    /// success (RO sources have nothing to flush).
+    fn flush(&self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 /// File-backed source. Works for regular files everywhere and for raw
@@ -31,13 +50,33 @@ pub trait BlockSource: Send + Sync {
 pub struct FileSource {
     file: File,
     size: u64,
+    writable: bool,
 }
 
 impl FileSource {
+    /// Open read-only.
     pub fn open(path: &Path) -> Result<Self> {
-        let file = open_with_share(path)?;
+        let file = open_with_share(path, false)?;
         let size = compute_size(&file).with_context(|| format!("sizing {path:?}"))?;
-        Ok(Self { file, size })
+        Ok(Self {
+            file,
+            size,
+            writable: false,
+        })
+    }
+
+    /// Open read-write. On Windows uses the same generous share mode
+    /// (`FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE`) plus
+    /// `.write(true)` so a mounted volume can still be reopened. On Unix
+    /// this is just `OpenOptions::new().read(true).write(true)`.
+    pub fn open_rw(path: &Path) -> Result<Self> {
+        let file = open_with_share(path, true)?;
+        let size = compute_size(&file).with_context(|| format!("sizing {path:?}"))?;
+        Ok(Self {
+            file,
+            size,
+            writable: true,
+        })
     }
 }
 
@@ -70,6 +109,48 @@ impl BlockSource for FileSource {
         }
         Ok(())
     }
+
+    #[cfg(unix)]
+    fn write_at(&self, offset: u64, buf: &[u8]) -> std::io::Result<()> {
+        use std::os::unix::fs::FileExt;
+        if !self.writable {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "FileSource opened read-only",
+            ));
+        }
+        self.file.write_all_at(buf, offset)
+    }
+
+    #[cfg(windows)]
+    fn write_at(&self, offset: u64, buf: &[u8]) -> std::io::Result<()> {
+        use std::os::windows::fs::FileExt;
+        if !self.writable {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "FileSource opened read-only",
+            ));
+        }
+        let mut total = 0usize;
+        while total < buf.len() {
+            let n = self.file.seek_write(&buf[total..], offset + total as u64)?;
+            if n == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "short write",
+                ));
+            }
+            total += n;
+        }
+        Ok(())
+    }
+
+    fn flush(&self) -> std::io::Result<()> {
+        if !self.writable {
+            return Ok(());
+        }
+        self.file.sync_data()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -77,19 +158,25 @@ impl BlockSource for FileSource {
 // ---------------------------------------------------------------------------
 
 #[cfg(unix)]
-fn open_with_share(path: &Path) -> Result<File> {
-    File::open(path).with_context(|| format!("opening {path:?}"))
+fn open_with_share(path: &Path, write: bool) -> Result<File> {
+    use std::fs::OpenOptions;
+    OpenOptions::new()
+        .read(true)
+        .write(write)
+        .open(path)
+        .with_context(|| format!("opening {path:?}"))
 }
 
 #[cfg(windows)]
-fn open_with_share(path: &Path) -> Result<File> {
+fn open_with_share(path: &Path, write: bool) -> Result<File> {
     use std::fs::OpenOptions;
     use std::os::windows::fs::OpenOptionsExt;
     // FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE = 7. Required
-    // when reading a mounted volume so the kernel doesn't reject us with
-    // ERROR_SHARING_VIOLATION.
+    // when reading/writing a mounted volume so the kernel doesn't reject
+    // us with ERROR_SHARING_VIOLATION.
     OpenOptions::new()
         .read(true)
+        .write(write)
         .share_mode(0x7)
         .open(path)
         .with_context(|| format!("opening {path:?}"))
