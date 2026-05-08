@@ -78,3 +78,12 @@ service = ["dep:windows-service"]
 lto = true
 codegen-units = 1
 opt-level = 3
+# panic = "abort" is the right semantics for a binary that runs as a
+# Windows Service: no human is around to read a panic message, and
+# unwinding the SCM-controlled main thread would only delay the
+# inevitable termination. (The `libunwind.dll` runtime dependency that
+# breaks SCM-launched session-0 binaries is dropped separately via
+# .cargo/config.toml's `+crt-static` for the gnullvm targets -- panic
+# strategy alone wasn't enough; the C runtime itself pulls in libunwind
+# for SEH handling on aarch64 and only crt-static drops it.)
+panic = "abort"
