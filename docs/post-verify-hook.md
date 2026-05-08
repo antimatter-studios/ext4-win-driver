@@ -1,12 +1,13 @@
 # Post-verify hook for ext4-win-driver
 
-Status: **not implemented**. Tracked here + via the
-`audit-post-verify-marker` scenario in `test-matrix.json` (status
-`blocked-needs-audit-cli`).
+Status: **implemented (option C)**. The default `[post_verify]` in
+`harness.toml` runs `ext4 audit {image}` after every passing scenario;
+the `audit-post-verify-marker` scenario in `test-matrix.json` exercises
+the explicit per-scenario form for the same hook.
 
-This doc records the design so the next agent who picks it up does not
-have to re-derive it. Three architectures are viable; option (c) is the
-cheapest near-term win.
+This doc kept for reference: it records the design considered before
+option C landed, so the rationale is visible if/when we move to the
+heavier options (Mac-side `fsck.ext4`, sidecar Linux container).
 
 ## What the harness already supports
 

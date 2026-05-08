@@ -50,3 +50,12 @@ info  = "{binary} info  {image}"
 command    = "{binary} mount {image} --drive {drive} {extra}"
 ready_line = "ext4 mounted at"
 rw_extra   = "--rw"
+
+[post_verify]
+# Default post-verify: read-only fsck-style audit after any passing
+# scenario. RW scenarios in particular benefit — confirms the writes
+# didn't break link counts, leave dangling entries, etc. Scenarios can
+# override or set `post_verify = null` if they intentionally produce
+# anomalies. See docs/post-verify-hook.md.
+command     = "{binary} audit {image}"
+expect_exit = 0

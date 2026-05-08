@@ -66,6 +66,21 @@ enum Cmd {
     },
     /// Inspect partition table (MBR/GPT) of a disk image or raw device.
     Parts { image: PathBuf },
+    /// Read-only filesystem audit. Walks every directory, compares each
+    /// inode's link count to observed dirent references, and reports
+    /// link-count drift / dangling entries / wrong `..` / etc. Exits 0
+    /// if clean, non-zero if any anomaly is found.
+    Audit {
+        #[command(flatten)]
+        mt: MountArgs,
+        /// Cap directories visited (0 = unbounded). Useful for huge
+        /// volumes where an exhaustive walk would take too long.
+        #[arg(long, default_value_t = 0)]
+        max_dirs: u32,
+        /// Cap entries scanned per directory (0 = unbounded).
+        #[arg(long, default_value_t = 0)]
+        max_entries_per_dir: u32,
+    },
     /// Mount the filesystem on a Windows drive letter via WinFsp.
     /// Defaults to read-only; pass `--rw` for read-write. Requires the
     /// `mount` feature and a Windows host.
@@ -95,6 +110,11 @@ fn main() -> Result<()> {
         Cmd::Cat { mt, path } => cmd::cat(&mt, &path),
         Cmd::Tree { mt, max_depth } => cmd::tree(&mt, max_depth),
         Cmd::Parts { image } => cmd::parts(&image),
+        Cmd::Audit {
+            mt,
+            max_dirs,
+            max_entries_per_dir,
+        } => cmd::audit(&mt, max_dirs, max_entries_per_dir),
         #[cfg(all(windows, feature = "mount"))]
         Cmd::Mount { mt, drive, rw } => {
             let m = if rw {
