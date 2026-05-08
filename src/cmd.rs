@@ -7,8 +7,9 @@
 use anyhow::{Context, Result, bail};
 use fs_ext4::capi::*;
 use std::ffi::{CStr, CString};
-use std::os::raw::c_void;
+use std::os::raw::{c_char, c_void};
 use std::path::Path;
+use std::sync::Mutex;
 
 use crate::MountArgs;
 use crate::mount::Mount;
@@ -302,4 +303,104 @@ pub fn parts(image: &Path) -> Result<()> {
         );
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// audit — read-only fsck via fs_ext4_fsck_run
+// ---------------------------------------------------------------------------
+
+/// Wraps a finding's three on-disk fields into a printable line.
+#[derive(Debug)]
+struct Finding {
+    kind: String,
+    inode: u32,
+    detail: String,
+}
+
+/// Receives findings from the C ABI via a `*mut c_void` context. The
+/// outer `Mutex` is required because the FFI surface only lets us hand
+/// over a raw pointer; the callback runs synchronously on the same
+/// thread but we still want a non-`unsafe` body inside the lock.
+struct AuditCtx {
+    findings: Mutex<Vec<Finding>>,
+}
+
+extern "C" fn audit_finding_cb(
+    context: *mut c_void,
+    kind: *const c_char,
+    inode: u32,
+    detail: *const c_char,
+) {
+    if context.is_null() || kind.is_null() {
+        return;
+    }
+    let ctx = unsafe { &*(context as *const AuditCtx) };
+    let kind_s = unsafe { CStr::from_ptr(kind).to_string_lossy().into_owned() };
+    let detail_s = if detail.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(detail).to_string_lossy().into_owned() }
+    };
+    if let Ok(mut v) = ctx.findings.lock() {
+        v.push(Finding {
+            kind: kind_s,
+            inode,
+            detail: detail_s,
+        });
+    }
+}
+
+pub fn audit(mt: &MountArgs, max_dirs: u32, max_entries_per_dir: u32) -> Result<()> {
+    let m = Mount::open(mt)?;
+    let ctx = Box::new(AuditCtx {
+        findings: Mutex::new(Vec::new()),
+    });
+    let raw_ctx = Box::into_raw(ctx);
+
+    let opts = fs_ext4_fsck_options_t {
+        read_only: 1,
+        // RO mount can't replay anyway; the C ABI rejects replay+RO.
+        replay_journal: 0,
+        max_dirs,
+        max_entries_per_dir,
+        on_progress: None,
+        on_finding: Some(audit_finding_cb),
+        context: raw_ctx as *mut c_void,
+        // Read-only audit — repair pass is skipped regardless, but the
+        // C ABI requires the field so we set it explicitly to 0.
+        repair: 0,
+    };
+    let mut report: fs_ext4_fsck_report_t = unsafe { std::mem::zeroed() };
+
+    let r = unsafe { fs_ext4_fsck_run(m.fs, &opts, &mut report) };
+    // Reclaim the context box no matter what, then handle errors.
+    let ctx = unsafe { Box::from_raw(raw_ctx) };
+
+    if r != 0 {
+        bail!("fs_ext4_fsck_run failed: {}", last_err());
+    }
+
+    println!("inodes_visited:      {}", report.inodes_visited);
+    println!("directories_scanned: {}", report.directories_scanned);
+    println!("entries_scanned:     {}", report.entries_scanned);
+    println!("anomalies_found:     {}", report.anomalies_found);
+    println!(
+        "was_dirty:           {}",
+        if report.was_dirty != 0 { "yes" } else { "no" }
+    );
+
+    if report.anomalies_found == 0 {
+        println!();
+        println!("clean");
+        return Ok(());
+    }
+
+    println!();
+    println!("anomalies:");
+    let findings = ctx.findings.into_inner().unwrap_or_default();
+    for f in &findings {
+        println!("  ino={:<8} {:<18} {}", f.inode, f.kind, f.detail);
+    }
+
+    bail!("audit found {} anomaly(s)", report.anomalies_found);
 }

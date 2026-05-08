@@ -565,13 +565,13 @@
       "_notes": "Placeholder for installer/Bundle.wxs coverage. MSI install + uninstall + right-click verb registration is Windows-only and mutates global state (Program Files, registry, ProgIDs). Unblock requires a sandboxed Windows VM snapshot the harness can revert between runs. Out of scope for the current foreground-mount-driven matrix."
     },
     "audit-post-verify-marker": {
-      "status": "blocked-needs-audit-cli",
+      "status": "pending",
       "image": "ext4-basic.img",
       "mount_args": [
         "--rw"
       ],
       "_attempts": [],
-      "_notes": "Design marker for the post_verify hook. See docs/post-verify-hook.md. The intended shape (once `ext4 audit <image>` exists) is shown via the post_verify block below — the runner will execute it after a passing RW scenario, after the mount tears down. Today this scenario is parked at status blocked-needs-audit-cli so it doesn't claim time but stays visible when re-reading the matrix.",
+      "_notes": "Exercises the post_verify hook explicitly. The default [post_verify] in harness.toml audits every passing scenario; this one is here as a self-documenting record of the contract — write content via mount, expect cat to round-trip, then audit confirms the RW path didn't break invariants.",
       "ops": [
         {
           "type": "write",
