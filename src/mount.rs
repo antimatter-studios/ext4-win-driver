@@ -60,6 +60,12 @@ impl Mount {
     /// only `--part N` is wired for RW (the WinFsp mount path). A direct
     /// (whole-image) RW open could be added later but isn't needed
     /// for the WinFsp use case where partition mounts dominate.
+    ///
+    /// Gated on `windows + feature = "mount"` because the only caller is
+    /// the `Cmd::Mount` arm in `main.rs`, which has the same gate.
+    /// Without this, `cargo check --no-default-features` flags the RW
+    /// openers as dead code.
+    #[cfg(all(windows, feature = "mount"))]
     pub fn open_rw(mt: &MountArgs) -> Result<Self> {
         match mt.part {
             None | Some(0) => Self::open_direct_rw(&mt.image),
@@ -69,6 +75,7 @@ impl Mount {
 
     /// RW analogue of [`open_direct`] — uses `fs_ext4_mount_rw` against the
     /// device path. Available so `--rw` works without a `--part`.
+    #[cfg(all(windows, feature = "mount"))]
     pub fn open_direct_rw(image: &Path) -> Result<Self> {
         let s = image
             .to_str()
@@ -174,6 +181,7 @@ impl Mount {
     /// with write access, plumbs read+write+flush callbacks into
     /// `fs_ext4_mount_rw_with_callbacks`, and replays a dirty journal
     /// before returning (eager-mount semantics).
+    #[cfg(all(windows, feature = "mount"))]
     pub fn open_partition_rw(image: &Path, n: usize) -> Result<Self> {
         let src: Arc<dyn BlockSource> = Arc::new(FileSource::open_rw(image)?);
         let parts = partition::list_from_source(src.as_ref())
@@ -270,6 +278,7 @@ extern "C" fn slice_read_cb(
     0
 }
 
+#[cfg(all(windows, feature = "mount"))]
 extern "C" fn slice_write_cb(
     ctx: *mut c_void,
     buf: *const c_void,
@@ -293,6 +302,7 @@ extern "C" fn slice_write_cb(
     0
 }
 
+#[cfg(all(windows, feature = "mount"))]
 extern "C" fn slice_flush_cb(ctx: *mut c_void) -> c_int {
     if ctx.is_null() {
         return -1;
