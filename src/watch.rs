@@ -40,7 +40,9 @@ mod imp {
     //!   2. `run` — install Ctrl-C handler, create message-only window,
     //!      register volume notifications, pump until WM_QUIT.
     //!   3. `wnd_proc` — handle WM_DEVICECHANGE, dispatch into State.
-    //!   4. helpers: `unitmask_to_letters`, `probe_ext4`, `pick_drive_letter`.
+    //!
+    //! Probe + drive-letter helpers live in [`crate::probe`] so the
+    //! service variant ([`crate::service`]) shares them.
 
     use anyhow::{Context, Result, anyhow};
     use std::collections::HashMap;
@@ -52,7 +54,6 @@ mod imp {
     use std::sync::{Mutex, OnceLock};
 
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-    use windows_sys::Win32::Storage::FileSystem::GetLogicalDrives;
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -64,7 +65,7 @@ mod imp {
         WM_DEVICECHANGE, WM_QUIT, WNDCLASSW,
     };
 
-    use crate::device::{BlockSource, FileSource};
+    use crate::probe;
 
     /// Window class name. Whatever — just needs to be unique to this
     /// process. Wide-encoded inline to avoid bringing in widestring.
@@ -238,7 +239,7 @@ mod imp {
                         GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Mutex<State>;
                     if !state_ptr.is_null() {
                         let state: &Mutex<State> = &*state_ptr;
-                        for letter in unitmask_to_letters(unitmask) {
+                        for letter in probe::unitmask_to_letters(unitmask) {
                             if event == DBT_DEVICEARRIVAL {
                                 handle_arrival(state, letter);
                             } else {
@@ -266,7 +267,7 @@ mod imp {
         let dev = format!("\\\\.\\{letter}:");
         let dev_path = Path::new(&dev);
 
-        match probe_ext4(dev_path) {
+        match probe::probe_path(dev_path) {
             Ok(true) => {}
             Ok(false) => return,
             Err(e) => {
@@ -275,7 +276,7 @@ mod imp {
             }
         }
 
-        let mount_letter = match pick_drive_letter() {
+        let mount_letter = match probe::pick_drive_letter() {
             Some(c) => c,
             None => {
                 eprintln!("[watch] {dev} ext4 detected but no free drive letter");
@@ -349,46 +350,6 @@ mod imp {
     fn mount_letters() -> &'static Mutex<HashMap<String, char>> {
         static M: OnceLock<Mutex<HashMap<String, char>>> = OnceLock::new();
         M.get_or_init(|| Mutex::new(HashMap::new()))
-    }
-
-    /// Decode `DEV_BROADCAST_VOLUME::dbcv_unitmask` (bit N = drive A+N)
-    /// into the list of affected drive letters.
-    fn unitmask_to_letters(mask: u32) -> Vec<char> {
-        let mut out = Vec::new();
-        for i in 0..26u32 {
-            if (mask >> i) & 1 != 0 {
-                out.push((b'A' + i as u8) as char);
-            }
-        }
-        out
-    }
-
-    /// Probe the device at `path` for an ext4 superblock. The superblock
-    /// starts at byte 1024; `s_magic` lives at offset 0x38 within it.
-    /// We just read those 2 bytes and check for `0xEF53` LE.
-    fn probe_ext4(path: &Path) -> Result<bool> {
-        let src = FileSource::open(path)
-            .with_context(|| format!("opening {} for ext4 probe", path.display()))?;
-        let mut magic = [0u8; 2];
-        // Best-effort: device too small or unreadable → not ext4.
-        if src.read_at(1024 + 0x38, &mut magic).is_err() {
-            return Ok(false);
-        }
-        Ok(magic == [0x53, 0xEF])
-    }
-
-    /// Pick the lowest free drive letter in `E..=Z` (skipping ones
-    /// already in use according to `GetLogicalDrives`). Returns `None`
-    /// if none are free.
-    fn pick_drive_letter() -> Option<char> {
-        let in_use = unsafe { GetLogicalDrives() };
-        // Bit 0 = A, bit 4 = E, …
-        for i in 4u32..26 {
-            if (in_use >> i) & 1 == 0 {
-                return Some((b'A' + i as u8) as char);
-            }
-        }
-        None
     }
 
     // OsStr → wide silencer kept for potential future use (path
