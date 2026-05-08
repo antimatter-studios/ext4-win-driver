@@ -93,50 +93,78 @@ jobs:
           # hosts and to "C:\Program Files\WinFsp\" on arm64; winfsp-rs
           # auto-discovers via the registry.
 
-      - name: install WiX 7 + extensions
+      - name: install WiX 7
         shell: pwsh
         run: |
           dotnet tool install --global wix
           wix eula accept wix7
-          wix extension add WixToolset.UI.wixext
-          wix extension add WixToolset.Util.wixext
-          wix extension add WixToolset.BootstrapperApplications.wixext
           wix --version
+
+      - name: patch vendored fsctl.h for x86 MSVC-compat _ReadWriteBarrier collision
+        if: matrix.arch == 'x64'
+        shell: pwsh
+        run: |
+          # Background: clang's MSVC compatibility (auto-enabled by the
+          # winfsp-sys bindgen invocation's `--target=...-pc-windows-msvc`)
+          # predefines _ReadWriteBarrier as a 0-arg function-like macro
+          # via the included intrin.h. WinFsp's fsctl.h then
+          # forward-declares
+          #     void _ReadWriteBarrier(void);
+          # which the preprocessor mangles into `void ;` -- "variable
+          # has incomplete type 'void'", with a paired "too many
+          # arguments to function-like macro invocation" error.
+          # `-U_ReadWriteBarrier` doesn't help because intrin.h is
+          # included after our -U processes.
+          #
+          # Wrap each forward-decl in a #pragma push_macro / #undef /
+          # #pragma pop_macro so the macro is hidden at exactly the
+          # point we need to declare the function.
+          # arm64 hits a different code branch (__dmb intrinsic) so
+          # this patch is x86-only.
+          $f = 'vendor/winfsp-rs/winfsp-sys/winfsp/inc/winfsp/fsctl.h'
+          $content = Get-Content $f -Raw
+          $needle = '    void _ReadWriteBarrier(void);'
+          $replacement = "#pragma push_macro(`"_ReadWriteBarrier`")`n#undef _ReadWriteBarrier`n    void _ReadWriteBarrier(void);`n#pragma pop_macro(`"_ReadWriteBarrier`")"
+          $content = $content -replace [regex]::Escape($needle), $replacement
+          Set-Content -Path $f -Value $content -NoNewline
+          "Patched $f"
+          Select-String -Path $f -Pattern '_ReadWriteBarrier' | Select-Object LineNumber, Line | Format-Table -AutoSize
 
       - name: cargo build --release --features mount,service
         shell: pwsh
         env:
-          # Belt-and-braces clang flags for bindgen:
-          #   -D__AVX512<feature>__=0 defangs the AVX-512 intrinsic
-          #     header path -- cross-version libclang/sysroot can
-          #     self-compile-fail there. WinFsp's ABI doesn't reference
-          #     AVX-512 types so this is safe.
-          #   -U_ReadWriteBarrier undefines the MSVC-compat compiler
-          #     intrinsic that clang predefines as a 0-arg macro on
-          #     x86; WinFsp's fsctl.h forward-declares
-          #     `void _ReadWriteBarrier(void)` and the macro
-          #     expansion turns that into `void ;` ("variable has
-          #     incomplete type 'void'"). arm64 doesn't hit this
-          #     because that branch uses `__dmb` instead.
-          BINDGEN_EXTRA_CLANG_ARGS: -D__AVX512F__=0 -D__AVX512BW__=0 -D__AVX512CD__=0 -D__AVX512DQ__=0 -D__AVX512VL__=0 -D__AVX512VBMI__=0 -D__AVX512VBMI2__=0 -U_ReadWriteBarrier
+          # Defang AVX-512 intrinsic header compilation -- cross-version
+          # libclang/sysroot self-compiles can fail there. WinFsp's ABI
+          # doesn't reference any AVX-512 types so neutering the macros
+          # is safe.
+          BINDGEN_EXTRA_CLANG_ARGS: -D__AVX512F__=0 -D__AVX512BW__=0 -D__AVX512CD__=0 -D__AVX512DQ__=0 -D__AVX512VL__=0 -D__AVX512VBMI__=0 -D__AVX512VBMI2__=0
         run: |
           cargo build --release --features mount,service --target ${{ matrix.rust_target }}
           $exe = "target\${{ matrix.rust_target }}\release\ext4.exe"
           if (-not (Test-Path $exe)) { throw "Build did not produce $exe" }
           "Built $exe ($((Get-Item $exe).Length) bytes)"
 
-      - name: installer/build.ps1 (-Arch ${{ matrix.arch }})
+      - name: add WiX extensions + run installer/build.ps1
         shell: pwsh
         run: |
-          # Re-add WiX extensions in the same step that runs build.ps1.
-          # The earlier "install WiX" step adds them globally, but the
-          # global cache hasn't been observed to persist reliably to
-          # later steps on the windows-11-arm runner -- WIX0144 "The
-          # extension 'WixToolset.Util.wixext' could not be found".
-          # Idempotent: re-adding an already-installed extension is a
-          # no-op.
-          wix extension add WixToolset.Util.wixext
-          wix extension add WixToolset.BootstrapperApplications.wixext
+          # Add the two extensions our .wxs files need. Doing this in
+          # the same step as build.ps1 because the global cache from a
+          # separate earlier step doesn't always persist to here on
+          # the windows-11-arm runner (WIX0144 "extension could not be
+          # found").
+          #
+          # `2>&1` so add failures show up in the job log; otherwise
+          # they vanish silently and we only see the WIX0144 from the
+          # eventual build call.
+          $ErrorActionPreference = 'Stop'
+          Write-Host "Adding WixToolset.Util.wixext..."
+          wix extension add -g WixToolset.Util.wixext 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "wix extension add Util failed: $LASTEXITCODE" }
+          Write-Host "Adding WixToolset.BootstrapperApplications.wixext..."
+          wix extension add -g WixToolset.BootstrapperApplications.wixext 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "wix extension add BootstrapperApplications failed: $LASTEXITCODE" }
+          Write-Host "Listing registered extensions:"
+          wix extension list 2>&1
           $exe = "target\${{ matrix.rust_target }}\release\ext4.exe"
           installer\build.ps1 -ExePath $exe -Arch ${{ matrix.arch }}
 
