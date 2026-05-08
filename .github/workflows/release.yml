@@ -61,6 +61,13 @@ jobs:
       - name: install LLVM-MinGW (ucrt, ${{ matrix.arch }})
         shell: pwsh
         run: |
+          # LLVM-MinGW ships the gnullvm runtime *and* a libclang.dll
+          # matched to the host arch and to the same clang version that
+          # parses its own headers. Using a separate libclang (e.g.
+          # chocolatey LLVM) cross-mixes versions and bindgen blows up
+          # when libclang-X reads the LLVM-MinGW clang-Y intrinsic
+          # headers (AVX-512 conversion errors on x64; "invalid DLL
+          # (x86-64)" on arm64). Single source of truth = no mismatch.
           $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/${{ env.LLVM_MINGW_VER }}/${{ matrix.llvm_mingw_archive }}"
           $zip = "$env:RUNNER_TEMP\llvm-mingw.zip"
           Invoke-WebRequest -Uri $url -OutFile $zip
@@ -69,13 +76,8 @@ jobs:
           $bin = Join-Path $extracted.FullName 'bin'
           "Adding $bin to PATH"
           Add-Content -Path $env:GITHUB_PATH -Value $bin
-
-      - name: install LLVM (for bindgen/libclang)
-        shell: pwsh
-        run: |
-          choco install llvm --yes --no-progress
-          $libclang = 'C:\Program Files\LLVM\bin'
-          "LIBCLANG_PATH=$libclang" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "Setting LIBCLANG_PATH=$bin"
+          "LIBCLANG_PATH=$bin" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: install WinFsp (build-time headers + libs)
         shell: pwsh
