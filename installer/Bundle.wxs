@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ext4-win-driver Burn bootstrapper.
+
+  Wraps Product.msi together with the WinFsp MSI into a single .exe so end
+  users don't have to install WinFsp by hand. Burn handles "already
+  installed → skip" automatically via DetectCondition + the registry
+  search below.
+
+  Built by `installer/build.ps1` after Product.msi is produced. The script
+  passes:
+    -d Version=<x.y.z>             from Cargo.toml
+    -d Ext4Msi=<path>              path to Product.msi just built
+    -d WinFspMsi=<path>            path to the redistributable WinFsp MSI
+    -d WinFspVersion=<x.y.z.b>     WinFsp's 4-part version (for DetectCondition)
+
+  Stable bundle UpgradeCode — DO NOT regenerate, or major-upgrade chaining
+  on the bundle itself breaks.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+
+  <Bundle
+      Name="ext4-win-driver"
+      Manufacturer="Chris Thomas"
+      Version="$(var.Version)"
+      UpgradeCode="b6d4e8a1-3f29-4c7d-9e22-1a8c5d6f7e34"
+      AboutUrl="https://github.com/christhomas/ext4-win-driver"
+      HelpUrl="https://winfsp.dev/">
+
+    <!--
+      WinFsp's MSI writes its 4-part version to
+      HKLM\SOFTWARE\WOW6432Node\WinFsp\Version (32-bit view) — Burn reads
+      it via util:RegistrySearchRef-style search. We use this both to
+      decide whether to skip the WinFsp package (DetectCondition) and to
+      gate "is it already new enough".
+    -->
+    <util:RegistrySearch
+        xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+        Id="WinFspInstalledVersion"
+        Root="HKLM"
+        Key="SOFTWARE\WOW6432Node\WinFsp"
+        Value="Version"
+        Result="value"
+        Format="raw"
+        Bitness="always32"
+        Variable="WinFspInstalledVersion" />
+
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication
+          LicenseFile="LICENSE"
+          Theme="hyperlinkLicense"
+          ShowVersion="yes"
+          SuppressOptionsUI="yes" />
+    </BootstrapperApplication>
+
+    <Chain>
+      <!--
+        WinFsp is installed first. DetectCondition: if the registry already
+        reports a version >= the one we ship, skip. Permanent="yes" leaves
+        WinFsp installed when ext4-win-driver is uninstalled (other apps
+        may depend on it — sshfs-win, rclone, …).
+      -->
+      <MsiPackage
+          Id="WinFsp"
+          SourceFile="$(var.WinFspMsi)"
+          DisplayName="WinFsp (Windows File System Proxy)"
+          Description="User-mode filesystem framework — required by ext4-win-driver."
+          Vital="yes"
+          Permanent="yes"
+          Visible="no"
+          Compressed="yes"
+          DetectCondition="WinFspInstalledVersion &gt;= v$(var.WinFspVersion)" />
+
+      <MsiPackage
+          Id="Ext4WinDriver"
+          SourceFile="$(var.Ext4Msi)"
+          DisplayName="ext4-win-driver"
+          Vital="yes"
+          Visible="no"
+          Compressed="yes" />
+    </Chain>
+
+  </Bundle>
+
+</Wix>
