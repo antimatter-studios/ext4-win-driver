@@ -62,12 +62,13 @@ jobs:
         shell: pwsh
         run: |
           # LLVM-MinGW ships the gnullvm runtime *and* a libclang.dll
-          # matched to the host arch and to the same clang version that
-          # parses its own headers. Using a separate libclang (e.g.
-          # chocolatey LLVM) cross-mixes versions and bindgen blows up
-          # when libclang-X reads the LLVM-MinGW clang-Y intrinsic
-          # headers (AVX-512 conversion errors on x64; "invalid DLL
-          # (x86-64)" on arm64). Single source of truth = no mismatch.
+          # matched to the host arch and to the same clang version
+          # that parses its own headers. Using a separate libclang
+          # (e.g. chocolatey LLVM) cross-mixes versions: bindgen blows
+          # up when libclang-X reads the LLVM-MinGW clang-Y intrinsic
+          # headers (AVX-512 conversion errors on x64) or rejects the
+          # DLL outright on arm64 ("invalid DLL (x86-64)" because
+          # chocolatey LLVM is x64-only). Single source = no mismatch.
           $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/${{ env.LLVM_MINGW_VER }}/${{ matrix.llvm_mingw_archive }}"
           $zip = "$env:RUNNER_TEMP\llvm-mingw.zip"
           Invoke-WebRequest -Uri $url -OutFile $zip
@@ -76,8 +77,22 @@ jobs:
           $bin = Join-Path $extracted.FullName 'bin'
           "Adding $bin to PATH"
           Add-Content -Path $env:GITHUB_PATH -Value $bin
-          "Setting LIBCLANG_PATH=$bin"
-          "LIBCLANG_PATH=$bin" | Out-File -FilePath $env:GITHUB_ENV -Append
+          # libclang.dll location varies by archive flavour. On some
+          # toolchain bundles it sits in bin/, on others it's only in
+          # lib/. Resolve it dynamically.
+          $libclang = Get-ChildItem -Path $extracted.FullName -Recurse -Filter 'libclang.dll' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $libclang) {
+              "ERROR: libclang.dll not found anywhere under $($extracted.FullName)"
+              "Listing bin/:"
+              Get-ChildItem $bin | Select-Object Name, Length | Format-Table -AutoSize
+              "Listing top-level:"
+              Get-ChildItem $extracted.FullName -Directory | Select-Object Name | Format-Table -AutoSize
+              throw "libclang.dll missing from LLVM-MinGW archive"
+          }
+          $libclangDir = Split-Path -Parent $libclang.FullName
+          "Found libclang at $($libclang.FullName)"
+          "Setting LIBCLANG_PATH=$libclangDir"
+          "LIBCLANG_PATH=$libclangDir" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: install WinFsp (build-time headers + libs)
         shell: pwsh
