@@ -5,3 +5,4 @@
 .test-env
 test-diagnostics/
 .claude/
+.history/
