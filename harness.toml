@@ -32,12 +32,15 @@ env_prefix = "$env:LIBCLANG_PATH = 'C:\\Program Files\\LLVM\\bin';"
 # fsck = "fsck.ext4 -fn"
 
 [ops]
-ls   = "{binary} ls   {image} {path}"
-cat  = "{binary} cat  {image} {path}"
-stat = "{binary} stat {image} {path}"
-tree = "{binary} tree {image}"
-# `parts` is ext4-win-driver-specific.
+# {extra} carries per-op CLI flags (e.g. `--part 1` for whole-disk
+# images). Empty by default; set per scenario via the op's `extra`
+# field.
+ls   = "{binary} ls   {image} {path} {extra}"
+cat  = "{binary} cat  {image} {path} {extra}"
+stat = "{binary} stat {image} {path} {extra}"
+tree = "{binary} tree {image} {extra}"
 parts = "{binary} parts {image}"
+info  = "{binary} info  {image}"
 
 [mount]
 # WinFsp mount, foreground. The runner kills the background process on
