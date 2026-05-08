@@ -65,34 +65,37 @@
             Id="Ext4ExeFile"
             Source="$(var.ExePath)"
             KeyPath="yes"
-            Name="ext4.exe">
-          <!--
-            ExtFsWatcher service. The binary, when invoked with the `service`
-            argument, enters Windows-service mode and registers with SCM under
-            this name. Account=LocalSystem because the watcher signals
-            WinFsp.Launcher (which expects an elevated caller) and needs to
-            resolve volume devices in any session. Start=auto so it comes up
-            at boot. <ServiceControl> guarantees stop+remove on uninstall and
-            major-upgrade.
-          -->
-          <ServiceInstall
-              Id="ExtFsWatcherSvc"
-              Type="ownProcess"
-              Name="ExtFsWatcher"
-              DisplayName="ext4-win-driver auto-mount watcher"
-              Description="Watches for ext4 volumes plugging in and asks WinFsp.Launcher to mount them in the active user session."
-              Start="auto"
-              ErrorControl="normal"
-              Account="LocalSystem"
-              Vital="yes"
-              Arguments="service" />
-          <ServiceControl
-              Id="ExtFsWatcherSvcCtl"
-              Name="ExtFsWatcher"
-              Stop="both"
-              Remove="both"
-              Wait="yes" />
-        </File>
+            Name="ext4.exe" />
+        <!--
+          ExtFsWatcher service. The binary, when invoked with the `service`
+          argument, enters Windows-service mode and registers with SCM under
+          this name. Account=LocalSystem because the watcher signals
+          WinFsp.Launcher (which expects an elevated caller) and needs to
+          resolve volume devices in any session. Start=auto so it comes up
+          at boot. <ServiceControl> guarantees stop+remove on uninstall and
+          major-upgrade.
+
+          WiX 7 note: <ServiceInstall> + <ServiceControl> are direct
+          children of <Component>, not nested inside <File> (the WiX 4/5
+          shorthand). They reference the component's keyfile implicitly.
+        -->
+        <ServiceInstall
+            Id="ExtFsWatcherSvc"
+            Type="ownProcess"
+            Name="ExtFsWatcher"
+            DisplayName="ext4-win-driver auto-mount watcher"
+            Description="Watches for ext4 volumes plugging in and asks WinFsp.Launcher to mount them in the active user session."
+            Start="auto"
+            ErrorControl="normal"
+            Account="LocalSystem"
+            Vital="yes"
+            Arguments="service" />
+        <ServiceControl
+            Id="ExtFsWatcherSvcCtl"
+            Name="ExtFsWatcher"
+            Stop="both"
+            Remove="both"
+            Wait="yes" />
         <!--
           PATH update via WixUtilExtension. System=yes writes to the machine
           PATH (we're a perMachine install). Action=set + Part=last appends

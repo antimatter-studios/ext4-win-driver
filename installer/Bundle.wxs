@@ -35,6 +35,12 @@
       decide whether to skip the WinFsp package (DetectCondition) and to
       gate "is it already new enough".
     -->
+    <!--
+      WiX 7 dropped the `Format` attribute on util:RegistrySearch — the
+      raw value is what you get by default now. The Bitness="always32"
+      hits the WoW6432Node view where WinFsp's installer writes its
+      Version value.
+    -->
     <util:RegistrySearch
         xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
         Id="WinFspInstalledVersion"
@@ -42,14 +48,20 @@
         Key="SOFTWARE\WOW6432Node\WinFsp"
         Value="Version"
         Result="value"
-        Format="raw"
         Bitness="always32"
         Variable="WinFspInstalledVersion" />
 
+    <!--
+      hyperlinkLicense theme: clickable URL to the license rather than
+      the license text. Both elements need explicit attrs:
+        - <BootstrapperApplication Name="..."> identifies the BA payload
+        - <bal:WixStandardBootstrapperApplication LicenseUrl="..."> is
+          the actual license target the theme renders
+    -->
     <BootstrapperApplication>
       <bal:WixStandardBootstrapperApplication
-          LicenseFile="LICENSE"
           Theme="hyperlinkLicense"
+          LicenseUrl="https://www.gnu.org/licenses/gpl-3.0.html"
           ShowVersion="yes"
           SuppressOptionsUI="yes" />
     </BootstrapperApplication>
@@ -61,6 +73,13 @@
         WinFsp installed when ext4-win-driver is uninstalled (other apps
         may depend on it — sshfs-win, rclone, …).
       -->
+      <!--
+        Burn auto-detects MSI installation state via the package's
+        ProductCode + Upgrade table; we don't add an explicit
+        DetectCondition here. Permanent="yes" leaves WinFsp installed
+        when ext4-win-driver is uninstalled (other apps may rely on
+        it — sshfs-win, rclone, …).
+      -->
       <MsiPackage
           Id="WinFsp"
           SourceFile="$(var.WinFspMsi)"
@@ -69,8 +88,7 @@
           Vital="yes"
           Permanent="yes"
           Visible="no"
-          Compressed="yes"
-          DetectCondition="WinFspInstalledVersion &gt;= v$(var.WinFspVersion)" />
+          Compressed="yes" />
 
       <MsiPackage
           Id="Ext4WinDriver"
