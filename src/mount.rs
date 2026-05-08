@@ -952,7 +952,7 @@ mod winfsp_adapter {
         fn set_basic_info(
             &self,
             context: &Self::FileContext,
-            _file_attributes: u32,
+            file_attributes: u32,
             _creation_time: u64,
             last_access_time: u64,
             last_write_time: u64,
@@ -987,8 +987,38 @@ mod winfsp_adapter {
                     return Err(errno_to_status(errno).into());
                 }
             }
-            // file_attributes (READONLY etc.) intentionally not mapped in
-            // v1 — chmod-driven posix bits are the source of truth.
+
+            // Map FILE_ATTRIBUTE_READONLY ↔ POSIX write bits so Explorer's
+            // "Read-only" property checkbox round-trips. WinFsp passes
+            // INVALID_FILE_ATTRIBUTES (0xFFFFFFFF) when the caller didn't
+            // touch attributes; otherwise it passes the desired flags.
+            //
+            // Toggle is symmetric across owner/group/other write bits:
+            //   - READONLY set   → mode &= !0o222
+            //   - READONLY clear → mode |= 0o222
+            // We only chmod when the bit *changes*, so a plain
+            // SetFileTime + zero-edit on attributes doesn't churn ctime
+            // or rewrite the inode.
+            const INVALID_FILE_ATTRIBUTES: u32 = 0xFFFF_FFFF;
+            if file_attributes != 0 && file_attributes != INVALID_FILE_ATTRIBUTES {
+                // Need current mode to detect the no-op case; stat now.
+                let cur = stat_path(self.mount.fs, &path)?;
+                let want_ro = file_attributes & FILE_ATTRIBUTE_READONLY.0 != 0;
+                let is_ro = (cur.mode & 0o222) == 0;
+                if want_ro != is_ro {
+                    let new_mode = if want_ro {
+                        cur.mode & !0o222
+                    } else {
+                        cur.mode | 0o222
+                    };
+                    let rc = unsafe { fs_ext4_chmod(self.mount.fs, cp.as_ptr(), new_mode) };
+                    if rc != 0 {
+                        let errno = unsafe { fs_ext4_last_errno() };
+                        return Err(errno_to_status(errno).into());
+                    }
+                }
+            }
+
             let attr = stat_path(self.mount.fs, &path)?;
             populate_file_info(&attr, file_info);
             *context.attr.lock().unwrap() = attr;
