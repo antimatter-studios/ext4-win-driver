@@ -6,13 +6,28 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
+use winfsp_fs_skeleton::FsBackend;
+
 mod cmd;
-mod device;
 mod mount;
-mod partition;
 mod probe;
-mod service;
-mod watch;
+
+/// Plugs ext4 detection into [`winfsp_fs_skeleton`]'s SCM service +
+/// foreground watcher. The four constants identify our consumer to
+/// Windows + WinFsp.Launcher; `detect` is the byte-slice predicate
+/// from [`crate::probe::is_ext4`].
+struct Ext4Backend;
+
+impl FsBackend for Ext4Backend {
+    const FS_NAME: &'static str = "ext4";
+    const SERVICE_NAME: &'static str = "ExtFsWatcher";
+    const LAUNCHER_SERVICE_CLASS: &'static str = "ext4-mount";
+    const FILE_EXTENSION: &'static str = "img";
+
+    fn detect(bytes: &[u8]) -> bool {
+        probe::is_ext4(bytes)
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "ext4", about = "Browse and (eventually) mount ext4 volumes on Windows")]
@@ -151,8 +166,8 @@ fn main() -> Result<()> {
             };
             mount::run(m, &drive)
         }
-        Cmd::Watch => watch::run(),
+        Cmd::Watch => winfsp_fs_skeleton::watch::run::<Ext4Backend>(),
         #[cfg(windows)]
-        Cmd::Service => service::run(),
+        Cmd::Service => winfsp_fs_skeleton::service::run::<Ext4Backend>(),
     }
 }

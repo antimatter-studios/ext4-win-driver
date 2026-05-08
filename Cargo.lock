@@ -238,9 +238,9 @@ dependencies = [
  "fs-ext4",
  "widestring",
  "windows",
- "windows-service",
  "windows-sys 0.59.0",
  "winfsp",
+ "winfsp-fs-skeleton",
  "winfsp-sys",
 ]
 
@@ -792,6 +792,16 @@ dependencies = [
  "widestring",
  "windows",
  "winfsp-sys",
+]
+
+[[package]]
+name = "winfsp-fs-skeleton"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ctrlc",
+ "windows-service",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
