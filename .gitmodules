@@ -8,3 +8,6 @@
 [submodule "vendor/rust-fs-ext4"]
 	path = vendor/rust-fs-ext4
 	url = https://github.com/christhomas/rust-fs-ext4.git
+[submodule "vendor/rust-fs-core"]
+	path = vendor/rust-fs-core
+	url = https://github.com/antimatter-studios/rust-fs-core.git

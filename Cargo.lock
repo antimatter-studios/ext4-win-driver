@@ -12,6 +12,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "am-fs-core"
+version = "0.1.0"
+
+[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -241,8 +245,9 @@ dependencies = [
 
 [[package]]
 name = "fs-ext4"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
+ "am-fs-core",
  "bitflags",
  "crc32c",
 ]
