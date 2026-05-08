@@ -27,6 +27,16 @@ The `fs-ext4` library lives at [`vendor/rust-fs-ext4/`](./vendor/rust-fs-ext4)
 (git submodule from [christhomas/rust-fs-ext4](https://github.com/christhomas/rust-fs-ext4))
 and is path-depended; this crate is the distribution unit.
 
+The Windows-driver scaffolding (SCM service, disk-arrival watcher,
+WinFsp.Launcher integration, partition-table walker, raw-device I/O,
+installer + CI templates) lives in
+[winfsp-fs-skeleton](https://github.com/antimatter-studios/winfsp-fs-skeleton),
+vendored at [`vendor/winfsp-fs-skeleton/`](./vendor/winfsp-fs-skeleton).
+ext4-win-driver is the **first consumer** of that skeleton -- it was
+extracted from this project once the auto-mount path was working
+end-to-end. See [The skeleton split](#the-skeleton-split) below for the
+boundary.
+
 ## Status
 
 Shipped in [v0.1.0](https://github.com/antimatter-studios/ext4-win-driver/releases/tag/v0.1.0):
@@ -133,6 +143,47 @@ Watch mode (foreground variant of the service, useful for dev / debugging):
 ext4 watch                                  # foreground; logs each arrival
 ```
 
+## The skeleton split
+
+After v0.1.0 was working end-to-end, the platform plumbing was
+extracted into its own crate ([winfsp-fs-skeleton](https://github.com/antimatter-studios/winfsp-fs-skeleton))
+so the same scaffolding can host future filesystem drivers (qcow2,
+ntfs, ...) without copy-paste. The boundary:
+
+| Lives in skeleton (reusable) | Lives here (ext4-specific) |
+|---|---|
+| `service::run<B>` -- SCM dispatcher + WinFsp.Launcher | [`src/main.rs`](./src/main.rs) -- `Ext4Backend` impl (4 const + 1 fn), CLI dispatch |
+| `watch::run<B>` -- foreground variant | [`src/cmd.rs`](./src/cmd.rs) -- info/ls/stat/cat/tree/parts/audit subcommands |
+| `partition` -- MBR/GPT parsing | [`src/mount.rs`](./src/mount.rs) -- WinFsp `FileSystemContext` impl, fs-ext4 callbacks |
+| `device` -- `BlockSource` + sector-aligned `FileSource` | [`src/probe.rs`](./src/probe.rs) -- `is_ext4` magic-byte predicate |
+| `probe` -- drive-letter selection, `GUID_DEVINTERFACE_DISK`, `DEV_BROADCAST_DEVICEINTERFACE_W` parsing | |
+| `templates/installer/` -- WiX MSI + Burn shapes | [`installer/`](./installer/) -- ext4-customised copies of the templates |
+| `templates/release.yml` -- GH Actions x64 + arm64 build matrix | [`.github/workflows/release.yml`](./.github/workflows/release.yml) |
+| `templates/winget/` -- manifest skeleton | [`winget/v0.1.0/`](./winget/v0.1.0/) -- the actual submission |
+
+The public seam is one trait + four constants:
+
+```rust
+use winfsp_fs_skeleton::FsBackend;
+
+struct Ext4Backend;
+impl FsBackend for Ext4Backend {
+    const FS_NAME: &'static str = "ext4";
+    const SERVICE_NAME: &'static str = "ExtFsWatcher";
+    const LAUNCHER_SERVICE_CLASS: &'static str = "ext4-mount";
+    const FILE_EXTENSION: &'static str = "img";
+    fn detect(bytes: &[u8]) -> bool { probe::is_ext4(bytes) }
+}
+```
+
+`Cmd::Watch` and `Cmd::Service` in [`src/main.rs`](./src/main.rs) just
+hand off:
+
+```rust
+Cmd::Watch   => winfsp_fs_skeleton::watch::run::<Ext4Backend>(),
+Cmd::Service => winfsp_fs_skeleton::service::run::<Ext4Backend>(),
+```
+
 ## Build
 
 CLI only (any platform):
@@ -165,6 +216,9 @@ where the LocalSystem PATH doesn't reach the LLVM-MinGW runtime dir.
   - `LLVM` for `libclang.dll` (`winget install LLVM.LLVM`)
   - LLVM-MinGW (`winget install MartinStorsjo.LLVM-MinGW.UCRT`)
 - `LIBCLANG_PATH=C:\Program Files\LLVM\bin` so bindgen can find `libclang.dll`.
+- [winfsp-fs-skeleton](https://github.com/antimatter-studios/winfsp-fs-skeleton)
+  is a git submodule at [`vendor/winfsp-fs-skeleton/`](./vendor/winfsp-fs-skeleton);
+  pure Rust, no extra toolchain requirements.
 
 ### Building the installer
 
