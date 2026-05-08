@@ -1,9 +1,9 @@
 [submodule "vendor/fs-test-harness"]
 	path = vendor/fs-test-harness
-	url = git@github.com:antimatter-studios/fs-test-harness.git
+	url = https://github.com/antimatter-studios/fs-test-harness.git
 [submodule "vendor/winfsp-rs"]
 	path = vendor/winfsp-rs
-	url = git@github.com:antimatter-studios/winfsp-rs.git
+	url = https://github.com/antimatter-studios/winfsp-rs.git
 	branch = gnullvm-support
 [submodule "vendor/rust-fs-ext4"]
 	path = vendor/rust-fs-ext4
