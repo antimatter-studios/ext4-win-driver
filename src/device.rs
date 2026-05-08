@@ -51,6 +51,13 @@ pub struct FileSource {
     file: File,
     size: u64,
     writable: bool,
+    /// Required IO alignment in bytes. `1` for regular files (no
+    /// constraint); for raw Windows devices we set it to the device's
+    /// physical sector size (512 on classic drives, 4096 on advanced
+    /// format / 4Kn). Read paths round down/up to this granularity
+    /// because Windows raw-disk handles reject `ReadFile` calls
+    /// whose offset or length isn't a multiple of the sector size.
+    sector: u64,
 }
 
 impl FileSource {
@@ -58,10 +65,12 @@ impl FileSource {
     pub fn open(path: &Path) -> Result<Self> {
         let file = open_with_share(path, false)?;
         let size = compute_size(&file).with_context(|| format!("sizing {path:?}"))?;
+        let sector = detect_sector_alignment(&file);
         Ok(Self {
             file,
             size,
             writable: false,
+            sector,
         })
     }
 
@@ -72,10 +81,12 @@ impl FileSource {
     pub fn open_rw(path: &Path) -> Result<Self> {
         let file = open_with_share(path, true)?;
         let size = compute_size(&file).with_context(|| format!("sizing {path:?}"))?;
+        let sector = detect_sector_alignment(&file);
         Ok(Self {
             file,
             size,
             writable: true,
+            sector,
         })
     }
 }
@@ -94,11 +105,46 @@ impl BlockSource for FileSource {
     #[cfg(windows)]
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> std::io::Result<()> {
         use std::os::windows::fs::FileExt;
+
+        // Fast path: regular files (sector == 1) or raw-device reads
+        // that happen to already be sector-aligned. Avoids the bounce
+        // buffer + memcpy for the common case.
+        let aligned_offset = offset & !(self.sector - 1);
+        let aligned_len_needed = {
+            let end = offset + buf.len() as u64;
+            let aligned_end = (end + self.sector - 1) & !(self.sector - 1);
+            aligned_end - aligned_offset
+        };
+        if self.sector == 1
+            || (aligned_offset == offset && aligned_len_needed == buf.len() as u64)
+        {
+            let mut total = 0usize;
+            while total < buf.len() {
+                let n = self
+                    .file
+                    .seek_read(&mut buf[total..], offset + total as u64)?;
+                if n == 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "short read",
+                    ));
+                }
+                total += n;
+            }
+            return Ok(());
+        }
+
+        // Slow path: raw-device read that isn't sector-aligned. Round
+        // offset down + length up to the device's sector size, read
+        // into a scratch buffer, then memcpy the requested range out.
+        // The overhead is at most one extra sector at each end --
+        // negligible next to the syscall + DMA cost.
+        let mut scratch = vec![0u8; aligned_len_needed as usize];
         let mut total = 0usize;
-        while total < buf.len() {
+        while total < scratch.len() {
             let n = self
                 .file
-                .seek_read(&mut buf[total..], offset + total as u64)?;
+                .seek_read(&mut scratch[total..], aligned_offset + total as u64)?;
             if n == 0 {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::UnexpectedEof,
@@ -107,6 +153,8 @@ impl BlockSource for FileSource {
             }
             total += n;
         }
+        let copy_start = (offset - aligned_offset) as usize;
+        buf.copy_from_slice(&scratch[copy_start..copy_start + buf.len()]);
         Ok(())
     }
 
@@ -192,10 +240,20 @@ fn compute_size(file: &File) -> Result<u64> {
         }
     }
     // Block-device sizing on Unix needs platform-specific ioctls (Linux:
-    // BLKGETSIZE64, macOS: DKIOCGETBLOCKCOUNT). Out of scope — the goal
+    // BLKGETSIZE64, macOS: DKIOCGETBLOCKCOUNT). Out of scope -- the goal
     // is Windows. Best effort: seek-to-end.
     let mut f = file.try_clone()?;
     Ok(f.seek(SeekFrom::End(0))?)
+}
+
+/// Required IO alignment in bytes. `1` means "no constraint" -- regular
+/// files behave that way. For raw Windows devices (`\\.\X:`,
+/// `\\.\PhysicalDriveN`) we query the device's logical sector size via
+/// `IOCTL_DISK_GET_DRIVE_GEOMETRY_EX` and round to that. The IOCTL
+/// fails on regular files, which is how we distinguish the two.
+#[cfg(unix)]
+fn detect_sector_alignment(_file: &File) -> u64 {
+    1
 }
 
 #[cfg(windows)]
@@ -234,4 +292,42 @@ fn win32_device_size(file: &File) -> Result<u64> {
         return Err(std::io::Error::last_os_error()).context("IOCTL_DISK_GET_LENGTH_INFO");
     }
     Ok(info.Length as u64)
+}
+
+/// Probe `IOCTL_DISK_GET_DRIVE_GEOMETRY_EX` to find the device's
+/// logical sector size. Returns 1 (i.e. "no alignment constraint")
+/// when the IOCTL fails -- which is what we want for regular files.
+#[cfg(windows)]
+fn detect_sector_alignment(file: &File) -> u64 {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::IO::DeviceIoControl;
+    use windows_sys::Win32::System::Ioctl::{
+        DISK_GEOMETRY_EX, IOCTL_DISK_GET_DRIVE_GEOMETRY_EX,
+    };
+
+    let mut g: DISK_GEOMETRY_EX = unsafe { std::mem::zeroed() };
+    let mut returned: u32 = 0;
+    let ok = unsafe {
+        DeviceIoControl(
+            file.as_raw_handle() as _,
+            IOCTL_DISK_GET_DRIVE_GEOMETRY_EX,
+            std::ptr::null_mut(),
+            0,
+            &mut g as *mut _ as *mut _,
+            std::mem::size_of::<DISK_GEOMETRY_EX>() as u32,
+            &mut returned,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        // Regular file (or other non-disk handle). No alignment
+        // constraint at all.
+        return 1;
+    }
+    let bps = g.Geometry.BytesPerSector;
+    if bps == 0 || (bps & (bps - 1)) != 0 {
+        // Defensive: only accept power-of-two sector sizes.
+        return 512;
+    }
+    bps as u64
 }

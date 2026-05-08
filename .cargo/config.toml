@@ -1,0 +1,13 @@
+# Statically link the C runtime on Windows-GNU-LLVM targets so the
+# resulting EXE has no `libunwind.dll` import (or any other LLVM-MinGW
+# runtime DLL). Without this, the binary loads fine for an interactive
+# user whose PATH includes the toolchain's bin dir, but the loader
+# fails when SCM launches the binary as LocalSystem from session 0 --
+# its PATH doesn't reach the gnullvm runtime, the loader can't find
+# libunwind.dll, and the service start times out with 1053 "did not
+# connect."
+[target.aarch64-pc-windows-gnullvm]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.x86_64-pc-windows-gnullvm]
+rustflags = ["-C", "target-feature=+crt-static"]

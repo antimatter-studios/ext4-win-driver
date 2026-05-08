@@ -33,41 +33,16 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of ext4-win-driver is already installed." />
 
     <!--
-      WinFsp detection. WinFsp's installer writes
-        HKLM\SOFTWARE\WOW6432Node\WinFsp\InstallDir       (32-bit view, primary)
-        HKLM\SOFTWARE\WinFsp\InstallDir                    (64-bit view, fallback)
-      If neither is present we abort with a friendly message.
+      WinFsp is no longer detected here — the Burn bootstrapper
+      (Bundle.wxs) chains the WinFsp MSI ahead of this one, so by the time
+      we run, WinFsp is guaranteed present. Stand-alone MSI installs
+      (admins deploying via SCCM/Intune) are expected to push WinFsp
+      separately as part of the same package.
     -->
-    <Property Id="WINFSPINSTALLDIR">
-      <RegistrySearch
-          Id="FindWinFspInstallDir32"
-          Root="HKLM"
-          Key="SOFTWARE\WOW6432Node\WinFsp"
-          Name="InstallDir"
-          Type="raw"
-          Bitness="always32" />
-    </Property>
-    <Property Id="WINFSPINSTALLDIR64">
-      <RegistrySearch
-          Id="FindWinFspInstallDir64"
-          Root="HKLM"
-          Key="SOFTWARE\WinFsp"
-          Name="InstallDir"
-          Type="raw"
-          Bitness="always64" />
-    </Property>
-
-    <!--
-      LaunchCondition: at least one of the two InstallDir values must be present.
-      Message is shown in the standard MSI error dialog; the URL is plain text
-      because LaunchCondition messages don't render hyperlinks.
-    -->
-    <Launch
-        Condition="WINFSPINSTALLDIR OR WINFSPINSTALLDIR64 OR Installed"
-        Message="WinFsp 2.x is required but was not found. Please install WinFsp from https://winfsp.dev/ and then re-run this installer." />
 
     <Feature Id="Main" Title="ext4-win-driver" Level="1">
       <ComponentGroupRef Id="ProductComponents" />
+      <ComponentGroupRef Id="WinFspLauncherComponents" />
       <ComponentGroupRef Id="ContextMenuComponents" />
       <ComponentGroupRef Id="StartMenuComponents" />
     </Feature>
@@ -91,6 +66,36 @@
             Source="$(var.ExePath)"
             KeyPath="yes"
             Name="ext4.exe" />
+        <!--
+          ExtFsWatcher service. The binary, when invoked with the `service`
+          argument, enters Windows-service mode and registers with SCM under
+          this name. Account=LocalSystem because the watcher signals
+          WinFsp.Launcher (which expects an elevated caller) and needs to
+          resolve volume devices in any session. Start=auto so it comes up
+          at boot. <ServiceControl> guarantees stop+remove on uninstall and
+          major-upgrade.
+
+          WiX 7 note: <ServiceInstall> + <ServiceControl> are direct
+          children of <Component>, not nested inside <File> (the WiX 4/5
+          shorthand). They reference the component's keyfile implicitly.
+        -->
+        <ServiceInstall
+            Id="ExtFsWatcherSvc"
+            Type="ownProcess"
+            Name="ExtFsWatcher"
+            DisplayName="ext4-win-driver auto-mount watcher"
+            Description="Watches for ext4 volumes plugging in and asks WinFsp.Launcher to mount them in the active user session."
+            Start="auto"
+            ErrorControl="normal"
+            Account="LocalSystem"
+            Vital="yes"
+            Arguments="service" />
+        <ServiceControl
+            Id="ExtFsWatcherSvcCtl"
+            Name="ExtFsWatcher"
+            Stop="both"
+            Remove="both"
+            Wait="yes" />
         <!--
           PATH update via WixUtilExtension. System=yes writes to the machine
           PATH (we're a perMachine install). Action=set + Part=last appends
@@ -125,6 +130,76 @@
     </ComponentGroup>
 
     <!-- ====================================================================
+         WinFsp.Launcher service-class registration.
+
+         WinFsp.Launcher reads HKLM\SOFTWARE\WinFsp\Services\<class>\… to find
+         out how to spawn FS-mount helpers. We register the `ext4-mount` class
+         here so ExtFsWatcher (and ad-hoc CLI users) can ask the launcher to
+         spawn the `mount %2 [drive %1]` invocation on demand (see CommandLine
+         below for the literal template).
+
+         CommandLine template:
+           %1 -> drive letter argument
+           %2 -> disk device path argument (e.g. \\?\STORAGE#Disk#...)
+           %3 -> 1-indexed partition number, or "0" for whole-disk
+         JobControl=1 -> kill the helper if launcher dies.
+         Credentials=0 -> no per-call auth handshake (FS doesn't need creds).
+         Security DACL D:P(A;;RPWPLC;;;WD) -> Everyone can Start/Stop/List.
+           Mirrors sshfs-win and rclone's defaults; fine for a mount helper.
+
+         The Burn bundle (Bundle.wxs) chains the WinFsp MSI ahead of this one,
+         so the WinFsp.Launcher service is up by the time these registry
+         values are read. Stand-alone MSI installs must push WinFsp
+         separately — the keys are still valid, just inert until then.
+         ==================================================================== -->
+    <ComponentGroup Id="WinFspLauncherComponents" Directory="INSTALLFOLDER">
+
+      <Component Id="WinFspLauncherRegistration" Guid="*" Bitness="always32">
+        <!--
+          Bitness="always32" forces the registration into the
+          WOW6432Node view of the registry. WinFsp.Launcher is a
+          32-bit service: it reads `HKLM\SOFTWARE\WinFsp\Services\...`
+          from its own 32-bit context, which Windows redirects to
+          `HKLM\SOFTWARE\WOW6432Node\WinFsp\Services\...`. Without
+          always32 our 64-bit MSI writes to the 64-bit view of the
+          key and the launcher can't see it: spawning a mount fails
+          with NTSTATUS c0000034 OBJECT_NAME_NOT_FOUND.
+        -->
+        <RegistryKey
+            Root="HKLM"
+            Key="SOFTWARE\WinFsp\Services\ext4-mount"
+            ForceDeleteOnUninstall="yes">
+          <RegistryValue
+              Type="string"
+              Name="Executable"
+              Value="[INSTALLFOLDER]ext4.exe"
+              KeyPath="yes" />
+          <RegistryValue
+              Type="string"
+              Name="CommandLine"
+              Value="mount %2 --drive %1 --part %3" />
+          <RegistryValue
+              Type="string"
+              Name="WorkDirectory"
+              Value="[INSTALLFOLDER]" />
+          <RegistryValue
+              Type="integer"
+              Name="JobControl"
+              Value="1" />
+          <RegistryValue
+              Type="integer"
+              Name="Credentials"
+              Value="0" />
+          <RegistryValue
+              Type="string"
+              Name="Security"
+              Value="D:P(A;;RPWPLC;;;WD)" />
+        </RegistryKey>
+      </Component>
+
+    </ComponentGroup>
+
+    <!-- ====================================================================
          Explorer right-click context menu on .img files.
 
          We attach to SystemFileAssociations\.img (a verb-only key that doesn't
@@ -142,10 +217,14 @@
               Type="string"
               Value="Mount as ext4"
               KeyPath="yes" />
+          <!--
+            Icon: point at the EXE's first embedded icon resource (index 0).
+            "<path>,0" is the canonical shell-icon-spec form; do not quote.
+          -->
           <RegistryValue
               Name="Icon"
               Type="string"
-              Value="&quot;[INSTALLFOLDER]ext4.exe&quot;" />
+              Value="[INSTALLFOLDER]ext4.exe,0" />
         </RegistryKey>
       </Component>
 
@@ -153,7 +232,7 @@
         <RegistryKey Root="HKCR" Key="SystemFileAssociations\.img\shell\MountAsExt4\command">
           <RegistryValue
               Type="string"
-              Value="powershell.exe -NoExit -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]Mount-Ext4.ps1&quot; &quot;%1&quot;"
+              Value="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]Mount-Ext4.ps1&quot; &quot;%1&quot;"
               KeyPath="yes" />
         </RegistryKey>
       </Component>

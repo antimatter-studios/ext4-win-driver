@@ -10,6 +10,8 @@ mod cmd;
 mod device;
 mod mount;
 mod partition;
+mod probe;
+mod service;
 mod watch;
 
 #[derive(Parser)]
@@ -21,12 +23,19 @@ struct Cli {
 
 /// Shared mount-source flags. `image` is the file or device path; `part`
 /// optionally selects the Nth (1-indexed) partition in a whole-disk image.
+///
+/// `--part 0` is treated as "no partition" (i.e. the same as omitting
+/// the flag). The ExtFsWatcher service relies on this when a disk
+/// arrives without a partition table -- it always passes `--part`
+/// because the WinFsp.Launcher CommandLine template is fixed, and
+/// uses 0 to mean "open the whole device as the ext4 fs".
 #[derive(Args, Clone)]
 struct MountArgs {
     /// Disk image, ext4 filesystem image, or (Windows) raw device.
     image: PathBuf,
     /// 1-indexed partition number when `image` is a whole-disk image.
-    /// See `ext4 parts <image>` for the partition list.
+    /// See `ext4 parts <image>` for the partition list. `0` is treated
+    /// the same as omitting the flag.
     #[arg(long, short = 'p')]
     part: Option<usize>,
 }
@@ -99,6 +108,14 @@ enum Cmd {
     /// auto-mount them by spawning `ext4 mount` as a child process.
     /// Windows-only; on other targets prints a hint and exits.
     Watch,
+    /// Run as a Windows Service (SCM dispatcher). Same behaviour as
+    /// `watch`, but mounts are launched through WinFsp.Launcher's
+    /// `launchctl-<arch>.exe` so they appear in the active console
+    /// session instead of session 0. Intended to be invoked by the
+    /// SCM, not run interactively. Windows-only; non-Windows builds
+    /// print a hint and exit.
+    #[cfg(windows)]
+    Service,
 }
 
 fn main() -> Result<()> {
@@ -125,5 +142,7 @@ fn main() -> Result<()> {
             mount::run(m, &drive)
         }
         Cmd::Watch => watch::run(),
+        #[cfg(windows)]
+        Cmd::Service => service::run(),
     }
 }

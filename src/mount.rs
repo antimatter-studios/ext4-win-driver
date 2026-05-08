@@ -47,8 +47,11 @@ unsafe impl Sync for Mount {}
 
 impl Mount {
     pub fn open(mt: &MountArgs) -> Result<Self> {
+        // Treat --part 0 as "no partition" (same as omitting the flag).
+        // Lets the ExtFsWatcher service pass --part unconditionally
+        // through the fixed WinFsp.Launcher CommandLine template.
         match mt.part {
-            None => Self::open_direct(&mt.image),
+            None | Some(0) => Self::open_direct(&mt.image),
             Some(n) => Self::open_partition(&mt.image, n),
         }
     }
@@ -59,7 +62,7 @@ impl Mount {
     /// for the WinFsp use case where partition mounts dominate.
     pub fn open_rw(mt: &MountArgs) -> Result<Self> {
         match mt.part {
-            None => Self::open_direct_rw(&mt.image),
+            None | Some(0) => Self::open_direct_rw(&mt.image),
             Some(n) => Self::open_partition_rw(&mt.image, n),
         }
     }
