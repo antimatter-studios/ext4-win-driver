@@ -23,7 +23,7 @@ packages = [
     "LLVM.LLVM",
 ]
 # bindgen needs libclang to parse winfsp.h.
-env_prefix = "$env:LIBCLANG_PATH = 'C:\\Program Files\\LLVM\\bin'"
+env_prefix = "$env:LIBCLANG_PATH = 'C:\\Program Files\\LLVM\\bin';"
 
 [tools]
 # Optional. fsck.ext4 isn't on the Windows VM today; post-verify hooks

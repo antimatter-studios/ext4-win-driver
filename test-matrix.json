@@ -224,14 +224,14 @@
       ]
     },
     "whole-disk-with-part": {
-      "status": "blocked-needs-test-image-builder",
+      "status": "pending",
       "image": "ext4-whole-disk.img",
       "mount_args": [
         "--part",
         "1"
       ],
       "_attempts": [],
-      "_notes": "We don't currently ship a whole-disk (MBR/GPT-wrapped) test image in /Volumes/sdcard256gb/projects/rust-fs-ext4/test-disks/. The existing image-build code lived in earlier git history. Unblock = restore (or re-write) a small wrapper-image builder that produces ext4-whole-disk.img with one ext4 partition and seed it next to the other test disks. Then point this scenario at it.",
+      "_notes": "Whole-disk image is built by fixtures/build-whole-disk.py — wraps ext4-basic.img in a GPT layout with one Linux-fs partition starting at LBA 2048.",
       "ops": [
         {
           "type": "ls",
