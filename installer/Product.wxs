@@ -139,11 +139,12 @@
          below for the literal template).
 
          CommandLine template:
-           %1 → drive letter argument
-           %2 → device path argument
-         JobControl=1 → kill the helper if launcher dies.
-         Credentials=0 → no per-call auth handshake (FS doesn't need creds).
-         Security DACL D:P(A;;RPWPLC;;;WD) → Everyone can Start/Stop/List.
+           %1 -> drive letter argument
+           %2 -> disk device path argument (e.g. \\?\STORAGE#Disk#...)
+           %3 -> 1-indexed partition number, or "0" for whole-disk
+         JobControl=1 -> kill the helper if launcher dies.
+         Credentials=0 -> no per-call auth handshake (FS doesn't need creds).
+         Security DACL D:P(A;;RPWPLC;;;WD) -> Everyone can Start/Stop/List.
            Mirrors sshfs-win and rclone's defaults; fine for a mount helper.
 
          The Burn bundle (Bundle.wxs) chains the WinFsp MSI ahead of this one,
@@ -153,7 +154,17 @@
          ==================================================================== -->
     <ComponentGroup Id="WinFspLauncherComponents" Directory="INSTALLFOLDER">
 
-      <Component Id="WinFspLauncherRegistration" Guid="*">
+      <Component Id="WinFspLauncherRegistration" Guid="*" Bitness="always32">
+        <!--
+          Bitness="always32" forces the registration into the
+          WOW6432Node view of the registry. WinFsp.Launcher is a
+          32-bit service: it reads `HKLM\SOFTWARE\WinFsp\Services\...`
+          from its own 32-bit context, which Windows redirects to
+          `HKLM\SOFTWARE\WOW6432Node\WinFsp\Services\...`. Without
+          always32 our 64-bit MSI writes to the 64-bit view of the
+          key and the launcher can't see it: spawning a mount fails
+          with NTSTATUS c0000034 OBJECT_NAME_NOT_FOUND.
+        -->
         <RegistryKey
             Root="HKLM"
             Key="SOFTWARE\WinFsp\Services\ext4-mount"
@@ -166,7 +177,7 @@
           <RegistryValue
               Type="string"
               Name="CommandLine"
-              Value="mount %2 --drive %1" />
+              Value="mount %2 --drive %1 --part %3" />
           <RegistryValue
               Type="string"
               Name="WorkDirectory"
