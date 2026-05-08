@@ -12,8 +12,9 @@ Scope:
    via [WinFsp](https://github.com/winfsp/winfsp). Read-only today,
    read-write to follow.
 
-The `fs-ext4` library lives at `../rust-fs-ext4` and is path-depended; this
-crate is the distribution unit.
+The `fs-ext4` library lives at [`vendor/rust-fs-ext4/`](./vendor/rust-fs-ext4)
+(git submodule from [christhomas/rust-fs-ext4](https://github.com/christhomas/rust-fs-ext4))
+and is path-depended; this crate is the distribution unit.
 
 ## Status
 
@@ -82,10 +83,10 @@ cargo build --release --features mount
 
 Scenarios live in [`test-matrix.json`](./test-matrix.json) and the per-project
 adapter config in [`harness.toml`](./harness.toml). Both are consumed by the
-shared [`fs-test-harness`](https://github.com/antimatter-studios/fs-test-harness)
-vendored as a git submodule at [`harness/`](./harness).
+shared [`fs-test-harness`](https://github.com/antimatter-studios/fs-test-harness),
+vendored as a git submodule at [`vendor/fs-test-harness/`](./vendor/fs-test-harness).
 
-After cloning, initialise the submodule:
+After cloning, initialise the submodules:
 
 ```sh
 git submodule update --init --recursive
@@ -94,25 +95,26 @@ git submodule update --init --recursive
 One-time VM setup, on the Mac:
 
 ```sh
-bash harness/scripts/setup-local.sh        # writes .test-env
+bash vendor/fs-test-harness/scripts/setup-local.sh        # writes .test-env
 ```
 
 Run a scenario end-to-end (Mac → SSH → Windows VM → diag pull):
 
 ```sh
-bash harness/scripts/test-windows-matrix.sh basic-ro-list
+bash vendor/fs-test-harness/scripts/test-windows-matrix.sh basic-ro-list
 ```
 
 Diagnostics land under `test-diagnostics/run-<UTC>/`. See the harness's
-[`docs/triage-protocol.md`](./harness/docs/triage-protocol.md) for how to
-read a failure, and [`docs/multi-agent-protocol.md`](./harness/docs/multi-agent-protocol.md)
+[`docs/triage-protocol.md`](./vendor/fs-test-harness/docs/triage-protocol.md)
+for how to read a failure, and
+[`docs/multi-agent-protocol.md`](./vendor/fs-test-harness/docs/multi-agent-protocol.md)
 for running multiple agents against the same matrix.
 
-To update the harness when the upstream releases:
+To update a vendored submodule when its upstream releases:
 
 ```sh
-git submodule update --remote --merge harness
-git add harness && git commit -m "chore: bump harness submodule"
+git submodule update --remote --merge vendor/fs-test-harness
+git add vendor/fs-test-harness && git commit -m "chore: bump fs-test-harness submodule"
 ```
 
 ## License

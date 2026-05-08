@@ -14,7 +14,7 @@ name = "ext4"
 path = "src/main.rs"
 
 [dependencies]
-fs-ext4 = { path = "../rust-fs-ext4" }
+fs-ext4 = { path = "vendor/rust-fs-ext4" }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 
@@ -38,22 +38,23 @@ ctrlc = "3"
 # `mount` feature is enabled AND the build target is Windows. On macOS
 # the `mount` feature does nothing (the cfg-gated module is empty).
 #
-# Path-depended on a local fork of winfsp-rs while the gnullvm-target
-# patch is upstreamed. The patch lifts `winfsp-sys/build.rs`'s MSVC-only
-# gate so the same MSVC-format .lib (consumed via lld-link) works for
-# *-pc-windows-gnullvm Rust toolchains too.
-winfsp = { path = "../winfsp-rs/winfsp", features = ["delayload", "system"], optional = true, default-features = false }
+# Path-depended on the antimatter-studios fork of winfsp-rs (vendored
+# under vendor/winfsp-rs) until our gnullvm-support PR lands upstream
+# at SnowflakePowered/winfsp-rs. The patch lifts winfsp-sys/build.rs's
+# MSVC-only gate so the same MSVC-format .lib (consumed via lld-link)
+# works for *-pc-windows-gnullvm Rust toolchains too.
+winfsp = { path = "vendor/winfsp-rs/winfsp", features = ["delayload", "system"], optional = true, default-features = false }
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
 ], optional = true }
-winfsp-sys = { path = "../winfsp-rs/winfsp-sys", optional = true }
+winfsp-sys = { path = "vendor/winfsp-rs/winfsp-sys", optional = true }
 widestring = { version = "1", optional = true }
 
 [target.'cfg(windows)'.build-dependencies]
 # Only used when the `mount` feature is on; build.rs guards the call.
 # `delayload` implies the `build` feature in winfsp's Cargo.toml.
-winfsp = { path = "../winfsp-rs/winfsp", features = ["delayload"], default-features = false }
+winfsp = { path = "vendor/winfsp-rs/winfsp", features = ["delayload"], default-features = false }
 
 [features]
 default = []

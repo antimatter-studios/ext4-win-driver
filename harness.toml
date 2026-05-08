@@ -1,8 +1,9 @@
 # harness.toml — fs-test-harness consumer config for ext4-win-driver.
 #
-# The harness scripts + Rust runner live at ./harness/, vendored as a
-# git submodule from https://github.com/antimatter-studios/fs-test-harness.
-# Run `git submodule update --init --recursive` after cloning.
+# The harness scripts + Rust runner live at ./vendor/fs-test-harness/,
+# vendored as a git submodule from
+# https://github.com/antimatter-studios/fs-test-harness. Run
+# `git submodule update --init --recursive` after cloning.
 
 [project]
 name        = "ext4-win-driver"
@@ -13,7 +14,7 @@ matrix_path = "test-matrix.json"
 host           = "chris@192.168.213.145"
 ssh_key        = "../diskjockey/vendor/rust-fs-ntfs/privatekey"
 workdir        = "C:/Users/chris/dev/ext4-work"
-image_dir      = "../rust-fs-ext4/test-disks"
+image_dir      = "vendor/rust-fs-ext4/test-disks"
 rust_toolchain = "stable-aarch64-pc-windows-gnullvm"
 # winfsp + LLVM-MinGW + LLVM (libclang) are prerequisites; see README's
 # "WinFsp build prerequisites" section. setup-windows-vm.ps1 handles
