@@ -6,7 +6,7 @@
   Thin PowerShell wrapper around `ext4.exe mount`. Accepts an optional
   image path; if omitted, opens an Open-File dialog so the user can pick
   one. Picks the first free drive letter (Z:..D:) and runs the mount in
-  the foreground — Ctrl-C unmounts.
+  the foreground -- Ctrl-C unmounts.
 
   Installed alongside ext4.exe in `%ProgramFiles%\ext4-win-driver\`.
 

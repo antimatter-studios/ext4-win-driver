@@ -4,8 +4,8 @@
 
 .DESCRIPTION
   Two-stage WiX 4 build:
-    1. `wix build Product.wxs`   →  ext4-win-driver-<ver>.msi
-    2. `wix build Bundle.wxs`    →  ext4-win-driver-<ver>-Setup.exe
+    1. `wix build Product.wxs`   ->  ext4-win-driver-<ver>.msi
+    2. `wix build Bundle.wxs`    ->  ext4-win-driver-<ver>-Setup.exe
        (chains WinFsp's MSI ahead of ours)
 
   Stage 2 needs the WinFsp redistributable MSI in `installer\redist\`.
@@ -18,10 +18,10 @@
   separately).
 
   Prerequisites:
-    - WiX 4+ — `dotnet tool install --global wix` (or winget WiXToolset.WiX).
+    - WiX 4+ -- `dotnet tool install --global wix` (or winget WiXToolset.WiX).
     - Extensions:
         wix extension add WixToolset.Util.wixext
-        wix extension add WixToolset.BootstrapperApplications.wixext  # bundle UI (WiX 7 — was Bal in WiX 4)
+        wix extension add WixToolset.BootstrapperApplications.wixext  # bundle UI (WiX 7 -- was Bal in WiX 4)
     - Internet access on first build (to fetch WinFsp), or pre-populated
       installer\redist\winfsp-<ver>.msi.
 
@@ -40,8 +40,8 @@
 .PARAMETER Arch
   Target architecture for the MSI + bundle. Must match the embedded
   ext4.exe:
-    x64    — built with target `x86_64-pc-windows-msvc`   (Machine 0x8664)
-    arm64  — built with target `aarch64-pc-windows-gnullvm` (Machine 0xAA64)
+    x64    -- built with target `x86_64-pc-windows-msvc`   (Machine 0x8664)
+    arm64  -- built with target `aarch64-pc-windows-gnullvm` (Machine 0xAA64)
   A mismatch (e.g. arm64 ext4.exe in an x64-templated MSI) installs but
   silently fails on the wrong host CPU. The script PE-sniffs $ExePath at
   startup and warns on disagreement. Default: x64.
@@ -78,13 +78,13 @@ $ErrorActionPreference = 'Stop'
 # WinFsp redistributable pin.
 #
 # Bump these together when a new WinFsp release ships:
-#   1. Update $WinFspVersion (4-part version — matches the MSI's
+#   1. Update $WinFspVersion (4-part version -- matches the MSI's
 #      ProductVersion, used by Bundle.wxs DetectCondition).
 #   2. Update $WinFspMsiName + $WinFspUrl from the GitHub release page
 #      https://github.com/winfsp/winfsp/releases.
-#   3. Update $WinFspSha256 — copy from the release notes' "SHA256" block.
+#   3. Update $WinFspSha256 -- copy from the release notes' "SHA256" block.
 #
-# Leaving $WinFspSha256 empty disables verification (DEV ONLY — never ship
+# Leaving $WinFspSha256 empty disables verification (DEV ONLY -- never ship
 # a bundle built that way; CI must hard-fail on empty).
 # ----------------------------------------------------------------------------
 $WinFspVersion = '2.1.25156'
@@ -93,7 +93,7 @@ $WinFspUrl     = "https://github.com/winfsp/winfsp/releases/download/v2.1/$WinFs
 $WinFspSha256  = '073a70e00f77423e34bed98b86e600def93393ba5822204fac57a29324db9f7a'
 
 # ----------------------------------------------------------------------------
-# Resolve paths. Script can be invoked from anywhere — anchor to its dir.
+# Resolve paths. Script can be invoked from anywhere -- anchor to its dir.
 # ----------------------------------------------------------------------------
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot  = Split-Path -Parent $scriptDir
@@ -141,7 +141,7 @@ try {
 # ----------------------------------------------------------------------------
 if (-not $Version) {
     if (-not (Test-Path $cargoToml)) {
-        throw "Cargo.toml not found at $cargoToml — pass -Version explicitly."
+        throw "Cargo.toml not found at $cargoToml -- pass -Version explicitly."
     }
     $inPackage = $false
     foreach ($line in Get-Content $cargoToml) {
@@ -153,7 +153,7 @@ if (-not $Version) {
         }
     }
     if (-not $Version) {
-        throw "Could not read version from $cargoToml — pass -Version explicitly."
+        throw "Could not read version from $cargoToml -- pass -Version explicitly."
     }
 }
 
@@ -175,7 +175,7 @@ $licenseDst = Join-Path $scriptDir 'LICENSE'
 if (Test-Path $licenseSrc) {
     Copy-Item -Force $licenseSrc $licenseDst
 } elseif (-not (Test-Path $licenseDst)) {
-    Set-Content -Path $licenseDst -Value 'GPL-3.0 — see https://www.gnu.org/licenses/gpl-3.0.html'
+    Set-Content -Path $licenseDst -Value 'GPL-3.0 -- see https://www.gnu.org/licenses/gpl-3.0.html'
 }
 
 # ----------------------------------------------------------------------------
@@ -200,7 +200,7 @@ Write-Host "OutputDir:  $OutputDir"
 Write-Host "MsiOnly:    $MsiOnly"
 
 # ============================================================================
-# Stage 1 — build the MSI.
+# Stage 1 -- build the MSI.
 # ============================================================================
 Push-Location $scriptDir
 try {
@@ -223,12 +223,12 @@ try {
 
 if ($MsiOnly) {
     Write-Host ""
-    Write-Host "MsiOnly set — skipping bundle. Done."
+    Write-Host "MsiOnly set -- skipping bundle. Done."
     return
 }
 
 # ============================================================================
-# Stage 2 — fetch WinFsp MSI (if missing), then build the Burn bundle.
+# Stage 2 -- fetch WinFsp MSI (if missing), then build the Burn bundle.
 # ============================================================================
 if (-not (Test-Path $redistDir)) {
     New-Item -ItemType Directory -Path $redistDir -Force | Out-Null
@@ -239,12 +239,12 @@ if (-not (Test-Path $winFspMsi)) {
     Write-Host ""
     Write-Host "[2/2] WinFsp MSI not cached; downloading..."
     Write-Host "      $WinFspUrl"
-    # TLS 1.2 — older PS defaults break on github.com.
+    # TLS 1.2 -- older PS defaults break on github.com.
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Invoke-WebRequest -Uri $WinFspUrl -OutFile $winFspMsi -UseBasicParsing
 }
 
-# SHA256 verification — refuse to ship an unverified bundle.
+# SHA256 verification -- refuse to ship an unverified bundle.
 if ($WinFspSha256) {
     $actual = (Get-FileHash -Algorithm SHA256 $winFspMsi).Hash.ToLowerInvariant()
     $expected = $WinFspSha256.ToLowerInvariant()
@@ -254,7 +254,7 @@ if ($WinFspSha256) {
     }
     Write-Host "WinFsp SHA256 verified."
 } else {
-    Write-Warning "WinFspSha256 is empty — bundle will be built without integrity check. DO NOT RELEASE."
+    Write-Warning "WinFspSha256 is empty -- bundle will be built without integrity check. DO NOT RELEASE."
 }
 
 Push-Location $scriptDir
@@ -263,7 +263,7 @@ try {
     Write-Host "[2/2] Building bundle..."
     # Bundle UI extension was renamed in WiX 7: the old WixToolset.Bal.wixext
     # NuGet now ships as WixToolset.BootstrapperApplications.wixext. The bal:
-    # xmlns/element names in Bundle.wxs are unchanged — only the package +
+    # xmlns/element names in Bundle.wxs are unchanged -- only the package +
     # -ext arg moved.
     & wix build `
         -ext WixToolset.Util.wixext `

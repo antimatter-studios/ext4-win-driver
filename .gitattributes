@@ -1,0 +1,7 @@
+# PowerShell scripts must use CRLF -- PS 5.1 is finicky about LF endings
+# around here-strings, and CRLF matches every Windows tool's expectations.
+# We keep these files plain ASCII (no em-dashes etc.) so PS 5.1 can parse
+# them without a UTF-8 BOM; that avoids relying on git's working-tree-
+# encoding filter, which depends on libiconv knowing the "UTF-8-BOM"
+# alias (macOS's libiconv does not).
+*.ps1 text eol=crlf
