@@ -241,16 +241,18 @@ mod imp {
 
         let mut st = state().lock().unwrap();
         st.shutting_down = true;
-        let drained: Vec<(String, char)> = st.mounts.drain().collect();
+        let drained: Vec<((String, usize), char)> = st.mounts.drain().collect();
         drop(st);
         let launcher = LauncherClient::locate().ok();
-        for (dev, letter) in drained {
+        for ((dev, n), letter) in drained {
             if let Some(l) = &launcher {
                 if let Err(e) = l.stop(letter) {
-                    eprintln!("[service] launchctl stop {letter}: {e:#} ({dev})");
+                    eprintln!("[service] launchctl stop {letter}: {e:#} ({dev}#part{n})");
                 }
             }
-            println!("[service] {dev} -> launchctl stop ext4-mount {letter} (shutdown)");
+            println!(
+                "[service] {dev}#part{n} -> launchctl stop ext4-mount {letter} (shutdown)"
+            );
         }
 
         // Report Stopped.
@@ -318,18 +320,19 @@ mod imp {
 
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, state_ptr);
 
-            // Volume-class device-interface filter. Using
-            // DEV_BROADCAST_VOLUME would match the WM_DEVICECHANGE
-            // payload but `RegisterDeviceNotificationW` only accepts
-            // DEV_BROADCAST_DEVICEINTERFACE_W or DEV_BROADCAST_HANDLE
-            // -- DEV_BROADCAST_VOLUME is rejected with
-            // ERROR_INVALID_DATA (13). The wndproc treats arrivals as
-            // a wake-up and uses `probe::diff_drives` to find the
-            // actually-changed letter(s).
+            // Disk-class device-interface filter. We listen at disk
+            // level (not volume level) because Windows refuses to
+            // assign drive letters to MBR partitions whose type code
+            // it doesn't recognise -- typical Linux ext4 SD cards
+            // never surface as a drive letter, so a volume-level
+            // subscription would never fire for them. The disk
+            // arrival fires regardless; the wndproc opens the disk
+            // path from the lparam payload, walks the partition
+            // table, and probes each partition at its on-disk offset.
             let mut filter: DEV_BROADCAST_DEVICEINTERFACE_W = std::mem::zeroed();
             filter.dbcc_size = std::mem::size_of::<DEV_BROADCAST_DEVICEINTERFACE_W>() as u32;
             filter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
-            filter.dbcc_classguid = probe::GUID_DEVINTERFACE_VOLUME;
+            filter.dbcc_classguid = probe::GUID_DEVINTERFACE_DISK;
             let dev_handle = RegisterDeviceNotificationW(
                 hwnd,
                 &filter as *const _ as *const _,
@@ -341,14 +344,6 @@ mod imp {
                     "RegisterDeviceNotificationW failed: {}",
                     std::io::Error::last_os_error()
                 ));
-            }
-
-            // Seed the drive-mask baseline so the first
-            // WM_DEVICECHANGE diffs against the boot-time set rather
-            // than 0 (which would treat every existing C:/D: as
-            // "newly arrived").
-            if let Ok(mut s) = state().lock() {
-                s.last_drive_mask = probe::current_drive_mask();
             }
 
             Ok(Pump {
@@ -399,17 +394,13 @@ mod imp {
 
     #[derive(Default)]
     struct State {
-        /// Source device path (`\\.\E:`) -> mount drive letter we asked
-        /// WinFsp.Launcher to host. Tracked so removal events know which
-        /// `launchctl stop` to issue and to skip volumes we never
-        /// mounted.
-        mounts: HashMap<String, char>,
+        /// `(disk_device_path, 1-indexed-partition)` -> mount drive
+        /// letter we asked WinFsp.Launcher to host. `disk_device_path`
+        /// is whatever the WM_DEVICECHANGE lparam reported -- typically
+        /// `\\?\STORAGE#Disk#{guid}#...` -- so removal lookups match
+        /// arrivals byte-for-byte.
+        mounts: HashMap<(String, usize), char>,
         shutting_down: bool,
-        /// Last `GetLogicalDrives` snapshot. The wndproc diffs the
-        /// current mask against this on every WM_DEVICECHANGE arrival /
-        /// removal to find which letter(s) actually changed -- the
-        /// message itself is treated as a wake-up only.
-        last_drive_mask: u32,
     }
 
     unsafe extern "system" fn wnd_proc(
@@ -420,28 +411,17 @@ mod imp {
     ) -> LRESULT {
         if msg == WM_DEVICECHANGE {
             let event = wparam as u32;
-            // Wake-up-only treatment: ignore the lparam payload (it's
-            // a DEV_BROADCAST_DEVICEINTERFACE_W, parsing the device
-            // path back to a drive letter is fiddly), use a
-            // GetLogicalDrives diff against the last seen mask as the
-            // source of truth for what changed.
             if event == DBT_DEVICEARRIVAL || event == DBT_DEVICEREMOVECOMPLETE {
                 let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Mutex<State>;
+                let bdi = lparam as *const DEV_BROADCAST_DEVICEINTERFACE_W;
                 if !state_ptr.is_null() {
-                    let state: &Mutex<State> = &*state_ptr;
-                    let prev = state
-                        .lock()
-                        .map(|s| s.last_drive_mask)
-                        .unwrap_or_else(|_| probe::current_drive_mask());
-                    let (cur, added, removed) = probe::diff_drives(prev);
-                    if let Ok(mut s) = state.lock() {
-                        s.last_drive_mask = cur;
-                    }
-                    for letter in added {
-                        handle_arrival(state, letter);
-                    }
-                    for letter in removed {
-                        handle_removal(state, letter);
+                    if let Some(disk_path) = probe::device_interface_name(bdi) {
+                        let state: &Mutex<State> = &*state_ptr;
+                        if event == DBT_DEVICEARRIVAL {
+                            handle_arrival(state, &disk_path);
+                        } else {
+                            handle_removal(state, &disk_path);
+                        }
                     }
                 }
             }
@@ -450,38 +430,110 @@ mod imp {
         DefWindowProcW(hwnd, msg, wparam, lparam)
     }
 
-    /// Volume arrived. Probe for ext4, pick a mount letter, ask
-    /// WinFsp.Launcher to spawn the mount in the active console
-    /// session.
-    fn handle_arrival(state: &Mutex<State>, letter: char) {
+    /// Disk arrived. Open the disk for raw read, walk MBR/GPT, probe
+    /// each partition for ext4, ask WinFsp.Launcher to spawn the mount
+    /// for each hit. If the disk has no partition table, treat it as
+    /// a single raw ext4 fs.
+    fn handle_arrival(state: &Mutex<State>, disk_path: &str) {
         if state.lock().map(|s| s.shutting_down).unwrap_or(true) {
             return;
         }
-
-        let dev = format!("\\\\.\\{letter}:");
-        let dev_path = Path::new(&dev);
-
-        match probe::probe_path(dev_path) {
-            Ok(true) => {}
-            Ok(false) => return,
-            Err(e) => {
-                eprintln!("[service] probe {dev} failed: {e:#}");
-                return;
-            }
-        }
-
-        // Active-console-session check: if no interactive user is
-        // logged in (returns 0xFFFFFFFF), there's nothing to mount
-        // *into*. Skip — a re-plug or login will retry.
+        // No active console session = nothing to mount into. Skip --
+        // a re-plug after login will retry.
         if active_console_session().is_none() {
-            eprintln!("[service] {dev}: no active console session, deferring mount");
+            eprintln!(
+                "[service] {disk_path}: no active console session, deferring mount"
+            );
             return;
         }
 
+        let parts = match crate::partition::list(Path::new(disk_path)) {
+            Ok(v) => v,
+            Err(e) => {
+                if format!("{e:#}").contains("no MBR signature") {
+                    spawn_partition_mount(state, disk_path, 0);
+                } else {
+                    eprintln!("[service] partition::list({disk_path}) failed: {e:#}");
+                }
+                return;
+            }
+        };
+
+        for (idx, part) in parts.iter().enumerate() {
+            let n = idx + 1;
+            let part_offset = part.start_lba * 512;
+            match probe_at_offset(disk_path, part_offset) {
+                Ok(true) => spawn_partition_mount(state, disk_path, n),
+                Ok(false) => {}
+                Err(e) => eprintln!("[service] probe {disk_path} part {n}: {e:#}"),
+            }
+        }
+    }
+
+    /// Disk removed. Stop every WinFsp.Launcher service we started
+    /// for partitions of this disk. Lookups by exact `disk_path`
+    /// match because arrivals and removals report the same string.
+    fn handle_removal(state: &Mutex<State>, disk_path: &str) {
+        let stops: Vec<((String, usize), char)> = {
+            let mut st = match state.lock() {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+            let keys: Vec<(String, usize)> = st
+                .mounts
+                .keys()
+                .filter(|(d, _)| d == disk_path)
+                .cloned()
+                .collect();
+            keys.into_iter()
+                .filter_map(|k| st.mounts.remove(&k).map(|v| (k, v)))
+                .collect()
+        };
+        if stops.is_empty() {
+            return;
+        }
+        let launcher = match LauncherClient::locate() {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("[service] cannot locate launchctl: {e:#}");
+                return;
+            }
+        };
+        for ((_, n), letter) in stops {
+            match launcher.stop(letter) {
+                Ok(()) => println!(
+                    "[service] {disk_path}#part{n} removed -> launchctl stop {LAUNCHER_SERVICE_CLASS} {letter}"
+                ),
+                Err(e) => eprintln!("[service] launchctl stop {letter}: {e:#}"),
+            }
+        }
+    }
+
+    /// Read a small sector-aligned window at `offset` from
+    /// `disk_path` and check for the ext4 superblock magic. 4 KiB
+    /// covers both 512-byte and 4Kn devices and is large enough to
+    /// reach `s_magic` at offset 0x438.
+    fn probe_at_offset(disk_path: &str, offset: u64) -> Result<bool> {
+        use crate::device::BlockSource;
+        let src = crate::device::FileSource::open(Path::new(disk_path))
+            .with_context(|| format!("opening {disk_path} for probe"))?;
+        let mut buf = vec![0u8; 4096];
+        if src.read_at(offset, &mut buf).is_err() {
+            return Ok(false);
+        }
+        Ok(probe::is_ext4(&buf))
+    }
+
+    /// Pick a free drive letter and ask WinFsp.Launcher to spawn the
+    /// mount in the active console session. Tracks the mount in
+    /// `State.mounts` keyed by `(disk_path, n)` so removal can stop it.
+    fn spawn_partition_mount(state: &Mutex<State>, disk_path: &str, n: usize) {
         let mount_letter = match probe::pick_drive_letter() {
             Some(c) => c,
             None => {
-                eprintln!("[service] {dev} ext4 detected but no free drive letter");
+                eprintln!(
+                    "[service] {disk_path}#part{n}: ext4 detected but no free drive letter"
+                );
                 return;
             }
         };
@@ -495,40 +547,16 @@ mod imp {
         };
 
         println!(
-            "[service] ext4 detected on {dev} -> launchctl start {LAUNCHER_SERVICE_CLASS} {mount_letter} {dev}"
+            "[service] ext4 detected on {disk_path}#part{n} -> launchctl start {LAUNCHER_SERVICE_CLASS} {mount_letter} {disk_path} {n}"
         );
 
-        match launcher.start(mount_letter, &dev) {
+        match launcher.start(mount_letter, disk_path, n) {
             Ok(()) => {
                 if let Ok(mut st) = state.lock() {
-                    st.mounts.insert(dev, mount_letter);
+                    st.mounts.insert((disk_path.to_string(), n), mount_letter);
                 }
             }
-            Err(e) => {
-                eprintln!("[service] launchctl start failed: {e:#}");
-            }
-        }
-    }
-
-    /// Volume removed. If we mounted it, ask WinFsp.Launcher to stop
-    /// the mount; otherwise ignore (don't stop random services).
-    fn handle_removal(state: &Mutex<State>, letter: char) {
-        let dev = format!("\\\\.\\{letter}:");
-        let mount_letter = match state.lock() {
-            Ok(mut st) => st.mounts.remove(&dev),
-            Err(_) => return,
-        };
-        let Some(mount_letter) = mount_letter else {
-            return;
-        };
-        match LauncherClient::locate() {
-            Ok(l) => match l.stop(mount_letter) {
-                Ok(()) => println!(
-                    "[service] {dev} removed -> launchctl stop {LAUNCHER_SERVICE_CLASS} {mount_letter}"
-                ),
-                Err(e) => eprintln!("[service] launchctl stop {mount_letter}: {e:#}"),
-            },
-            Err(e) => eprintln!("[service] cannot locate launchctl: {e:#}"),
+            Err(e) => eprintln!("[service] launchctl start failed: {e:#}"),
         }
     }
 
@@ -580,20 +608,32 @@ mod imp {
             Ok(LauncherClient { exe })
         }
 
-        fn start(&self, letter: char, dev: &str) -> Result<()> {
+        fn start(&self, letter: char, disk_path: &str, partition: usize) -> Result<()> {
             let letter_s = format!("{letter}");
             // `launchctl-<arch> start <ClassName> <InstanceName>
-            // [TemplateArgs...]`. We use the drive letter as the
-            // unique InstanceName (so concurrent mounts don't collide
-            // in `sc query`) and pass `<dev>` as the single template
-            // arg WinFsp.Launcher substitutes into the registered
-            // CommandLine. Stage 3 owns that registry side; assume the
-            // template is `... %1` where %1 is the source device.
+            // [TemplateArgs...]`. WinFsp.Launcher substitutes
+            // template args into the registered CommandLine starting
+            // at `%1` -- the InstanceName itself is not in the
+            // substitution table. So we pass the drive letter twice:
+            // once as InstanceName (so `sc query` shows distinct
+            // services for concurrent mounts), once as the first
+            // template arg.
+            //   %1 = drive letter
+            //   %2 = disk device path
+            //   %3 = 1-indexed partition number, or "0" to mean
+            //        "no partition table; treat the whole device
+            //        as the ext4 fs"
+            // The registered CommandLine in Product.wxs is
+            //   `mount %2 --drive %1 --part %3`.
+            let part_s = format!("{partition}");
+            let drive_arg = format!("{letter}:"); // ext4 mount --drive expects "X:"
             let status = Command::new(&self.exe)
                 .arg("start")
                 .arg(LAUNCHER_SERVICE_CLASS)
-                .arg(&letter_s)
-                .arg(dev)
+                .arg(&letter_s) // InstanceName
+                .arg(&drive_arg) // %1 -- substituted into `--drive %1`
+                .arg(disk_path) // %2
+                .arg(&part_s)   // %3
                 .status()
                 .with_context(|| format!("running {}", self.exe.display()))?;
             if !status.success() {

@@ -1,14 +1,23 @@
-//! Auto-mount watcher for Windows volume arrival/removal.
+//! Auto-mount watcher for Windows disk arrival/removal.
 //!
 //! Runs as a foreground process. On Windows, listens for
 //! `WM_DEVICECHANGE` (`DBT_DEVICEARRIVAL` / `DBT_DEVICEREMOVECOMPLETE`)
-//! filtered to volume-class device-interface notifications
-//! (`GUID_DEVINTERFACE_VOLUME`), diffs `GetLogicalDrives` against the
-//! last seen mask to find which letter actually changed, probes each
-//! newly-arrived volume for an ext4 superblock, and on a hit spawns
-//! `ext4 mount <device> --drive <letter>` as a child process. On
-//! removal, kills the child so its WinFsp `Drop` tears the mount down
-//! cleanly.
+//! filtered to disk-class device-interface notifications
+//! (`GUID_DEVINTERFACE_DISK`), reads the lparam's
+//! `DEV_BROADCAST_DEVICEINTERFACE_W::dbcc_name` to get the disk's
+//! device path (e.g. `\\?\STORAGE#Disk#{guid}#...`), opens it for raw
+//! read, walks the MBR/GPT partition table, and probes each partition
+//! for an ext4 superblock at its on-disk offset. On a hit, spawns
+//! `ext4 mount <disk_path> --drive <letter>: --part <N>` as a child
+//! process. On removal, kills every child we spawned for that disk so
+//! its WinFsp `Drop` tears the mount down cleanly.
+//!
+//! Why disk-class rather than volume-class: Windows refuses to assign
+//! drive letters to MBR partitions whose type code it doesn't
+//! recognise (e.g. `0x83` Linux native), so a volume-class
+//! subscription -- whose only useful "what changed" signal is a
+//! `GetLogicalDrives` diff -- never fires for typical Linux ext4 SD
+//! cards. Disk-class arrivals fire regardless of partition type.
 //!
 //! Self-contained: never links WinFsp directly. The current binary is
 //! re-exec'd with the `mount` subcommand — that subcommand is the one
@@ -49,8 +58,6 @@ mod imp {
 
     use anyhow::{Context, Result, anyhow};
     use std::collections::HashMap;
-    use std::ffi::OsStr;
-    use std::os::windows::ffi::OsStrExt;
     use std::path::Path;
     use std::process::{Child, Command};
     use std::ptr;
@@ -86,18 +93,24 @@ mod imp {
         STATE.get_or_init(|| Mutex::new(State::default()))
     }
 
+    /// Per-mount bookkeeping: the spawned `ext4 mount` child plus the
+    /// drive letter it was assigned, keyed in [`State::mounts`] by
+    /// `(disk_path, partition_index)`.
+    struct MountedChild {
+        child: Child,
+        letter: char,
+    }
+
     #[derive(Default)]
     struct State {
-        /// Drive-letter device path (`\\.\E:`) -> spawned `ext4 mount` child.
-        children: HashMap<String, Child>,
+        /// `(disk_device_path, 1-indexed-partition)` -> mount info.
+        /// `disk_device_path` is whatever the WM_DEVICECHANGE lparam
+        /// reported -- typically `\\?\STORAGE#Disk#{guid}#...` -- so
+        /// removal lookups match arrivals byte-for-byte.
+        mounts: HashMap<(String, usize), MountedChild>,
         /// Set on Ctrl-C / WM_QUIT path; the wndproc consults this so it
         /// stops spawning new mounts during shutdown.
         shutting_down: bool,
-        /// Last `GetLogicalDrives` snapshot. The wndproc diffs the
-        /// current mask against this on every WM_DEVICECHANGE arrival /
-        /// removal to find which letter(s) actually changed -- the
-        /// message itself is treated as a wake-up only.
-        last_drive_mask: u32,
     }
 
     pub fn run() -> Result<()> {
@@ -172,18 +185,17 @@ mod imp {
         // we own this freshly-created window.
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, state_ptr);
 
-        // Subscribe to volume-class device-interface notifications.
-        // `RegisterDeviceNotificationW` only accepts
-        // DEV_BROADCAST_DEVICEINTERFACE_W (with a class GUID) or
-        // DEV_BROADCAST_HANDLE; passing DEV_BROADCAST_VOLUME -- which
-        // is what the WM_DEVICECHANGE *payload* uses for volume events
-        // -- is rejected with ERROR_INVALID_DATA. We ignore the
-        // notification's lparam and rely on `probe::diff_drives` from
-        // the wndproc as the source of truth for what changed.
+        // Subscribe to disk-class device-interface notifications. We
+        // listen at the disk level (not volume level) because Windows
+        // refuses to assign drive letters to partitions whose type
+        // code it doesn't recognise -- typical Linux ext4 SD cards
+        // (single 0x83 partition, or no partition table at all) never
+        // surface as a drive letter, so a volume-level subscription
+        // would never fire for them. The disk arrival fires regardless.
         let mut filter: DEV_BROADCAST_DEVICEINTERFACE_W = std::mem::zeroed();
         filter.dbcc_size = std::mem::size_of::<DEV_BROADCAST_DEVICEINTERFACE_W>() as u32;
         filter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
-        filter.dbcc_classguid = probe::GUID_DEVINTERFACE_VOLUME;
+        filter.dbcc_classguid = probe::GUID_DEVINTERFACE_DISK;
         let dev_handle = RegisterDeviceNotificationW(
             hwnd,
             &filter as *const _ as *const _,
@@ -197,13 +209,7 @@ mod imp {
             ));
         }
 
-        // Seed the drive-mask baseline before we start pumping so the
-        // first arrival sees a delta against the boot state, not 0.
-        if let Ok(mut s) = state().lock() {
-            s.last_drive_mask = probe::current_drive_mask();
-        }
-
-        println!("[watch] listening for ext4 volume arrivals. Ctrl-C to stop.");
+        println!("[watch] listening for ext4 disk arrivals. Ctrl-C to stop.");
 
         // Message pump. GetMessageW returns 0 on WM_QUIT (the Ctrl-C
         // path posts that), -1 on error, anything else means dispatch.
@@ -231,13 +237,16 @@ mod imp {
 
         let mut st = state().lock().unwrap();
         st.shutting_down = true;
-        let drained: Vec<(String, Child)> = st.children.drain().collect();
+        let drained: Vec<((String, usize), MountedChild)> = st.mounts.drain().collect();
         drop(st);
-        for (dev, mut child) in drained {
+        for ((disk, part), mut mc) in drained {
             // Best-effort kill + reap; child's WinFsp Drop unmounts.
-            let _ = child.kill();
-            let _ = child.wait();
-            println!("[watch] {dev} → child unmounted (shutdown)");
+            let _ = mc.child.kill();
+            let _ = mc.child.wait();
+            println!(
+                "[watch] {disk}#part{part} -> child unmounted from {}: (shutdown)",
+                mc.letter
+            );
         }
         Ok(())
     }
@@ -252,30 +261,18 @@ mod imp {
     ) -> LRESULT {
         if msg == WM_DEVICECHANGE {
             let event = wparam as u32;
-            // Treat the message as a pure wake-up: diff the current
-            // drive-letter mask against the last seen one to discover
-            // what actually changed. The lparam payload would be a
-            // DEV_BROADCAST_DEVICEINTERFACE_W (since we registered with
-            // GUID_DEVINTERFACE_VOLUME), but converting its device path
-            // to a drive letter is fiddly; GetLogicalDrives is the
-            // shorter route.
             if event == DBT_DEVICEARRIVAL || event == DBT_DEVICEREMOVECOMPLETE {
                 let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Mutex<State>;
+                let bdi = lparam
+                    as *const windows_sys::Win32::UI::WindowsAndMessaging::DEV_BROADCAST_DEVICEINTERFACE_W;
                 if !state_ptr.is_null() {
-                    let state: &Mutex<State> = &*state_ptr;
-                    let prev = state
-                        .lock()
-                        .map(|s| s.last_drive_mask)
-                        .unwrap_or_else(|_| probe::current_drive_mask());
-                    let (cur, added, removed) = probe::diff_drives(prev);
-                    if let Ok(mut s) = state.lock() {
-                        s.last_drive_mask = cur;
-                    }
-                    for letter in added {
-                        handle_arrival(state, letter);
-                    }
-                    for letter in removed {
-                        handle_removal(state, letter);
+                    if let Some(disk_path) = probe::device_interface_name(bdi) {
+                        let state: &Mutex<State> = &*state_ptr;
+                        if event == DBT_DEVICEARRIVAL {
+                            handle_arrival(state, &disk_path);
+                        } else {
+                            handle_removal(state, &disk_path);
+                        }
                     }
                 }
             }
@@ -286,35 +283,108 @@ mod imp {
         DefWindowProcW(hwnd, msg, wparam, lparam)
     }
 
-    /// `DBT_DEVICEARRIVAL` for a volume: probe the new drive letter,
-    /// and if it carries an ext4 superblock, spawn `ext4 mount …`.
-    fn handle_arrival(state: &Mutex<State>, letter: char) {
-        // Don't spawn during shutdown.
+    /// `DBT_DEVICEARRIVAL` for a disk-class device interface: open the
+    /// disk, walk its partition table, probe each partition for an
+    /// ext4 superblock, and spawn `ext4 mount` for each hit.
+    fn handle_arrival(state: &Mutex<State>, disk_path: &str) {
         if state.lock().map(|s| s.shutting_down).unwrap_or(true) {
             return;
         }
 
-        let dev = format!("\\\\.\\{letter}:");
-        let dev_path = Path::new(&dev);
-
-        match probe::probe_path(dev_path) {
-            Ok(true) => {}
-            Ok(false) => return,
+        let parts = match crate::partition::list(Path::new(disk_path)) {
+            Ok(v) => v,
             Err(e) => {
-                eprintln!("[watch] probe {dev} failed: {e:#}");
-                return;
-            }
-        }
-
-        let mount_letter = match probe::pick_drive_letter() {
-            Some(c) => c,
-            None => {
-                eprintln!("[watch] {dev} ext4 detected but no free drive letter");
+                // No MBR signature? Treat the whole disk as a single
+                // raw ext4 fs (common for `mkfs.ext4 /dev/mmcblk0`
+                // without partitioning).
+                if format!("{e:#}").contains("no MBR signature") {
+                    spawn_partition_mount(state, disk_path, 0);
+                } else {
+                    eprintln!("[watch] partition::list({disk_path}) failed: {e:#}");
+                }
                 return;
             }
         };
 
-        println!("[watch] ext4 detected on {dev} → mounting on {mount_letter}:");
+        for (idx, part) in parts.iter().enumerate() {
+            let n = idx + 1; // 1-indexed for `--part`
+            let part_offset = part.start_lba * 512;
+            match probe_at_offset(disk_path, part_offset) {
+                Ok(true) => {
+                    spawn_partition_mount(state, disk_path, n);
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    eprintln!("[watch] probe {disk_path} part {n}: {e:#}");
+                }
+            }
+        }
+    }
+
+    /// `DBT_DEVICEREMOVECOMPLETE` for a disk: kill every child we own
+    /// for this disk (one per ext4 partition).
+    fn handle_removal(state: &Mutex<State>, disk_path: &str) {
+        let mut st = match state.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        let keys: Vec<(String, usize)> = st
+            .mounts
+            .keys()
+            .filter(|(d, _)| d == disk_path)
+            .cloned()
+            .collect();
+        for key in keys {
+            if let Some(mut mc) = st.mounts.remove(&key) {
+                let _ = mc.child.kill();
+                let _ = mc.child.wait();
+                println!(
+                    "[watch] {disk_path}#part{} removed -> unmounted from {}:",
+                    key.1, mc.letter
+                );
+            }
+        }
+    }
+
+    /// Probe a single partition (or the whole disk when `offset == 0`)
+    /// for an ext4 superblock. Reads a small sector-aligned window
+    /// from `disk_path` at the given byte offset and checks the
+    /// magic.
+    ///
+    /// Buffer size is rounded up to a multiple of 4096 because raw
+    /// disk handles on Windows require sector-aligned counts (512 on
+    /// classic drives, 4096 on 4Kn / advanced-format drives).
+    /// `probe::is_ext4` only needs the first 1090 bytes to reach
+    /// `s_magic`, so any 4 KiB read covers it.
+    fn probe_at_offset(disk_path: &str, offset: u64) -> Result<bool> {
+        use crate::device::BlockSource;
+        let src = crate::device::FileSource::open(Path::new(disk_path))
+            .with_context(|| format!("opening {disk_path} for probe"))?;
+        let mut buf = vec![0u8; 4096];
+        if src.read_at(offset, &mut buf).is_err() {
+            return Ok(false);
+        }
+        Ok(probe::is_ext4(&buf))
+    }
+
+    /// Pick a free drive letter and spawn `ext4 mount <disk_path>
+    /// --drive <X:> [--part <N>]` (omitting `--part` when `n == 0` to
+    /// signal whole-disk / no-partition-table). Tracks the spawned
+    /// child in `State.mounts` keyed by `(disk_path, n)`.
+    fn spawn_partition_mount(state: &Mutex<State>, disk_path: &str, n: usize) {
+        let mount_letter = match probe::pick_drive_letter() {
+            Some(c) => c,
+            None => {
+                eprintln!(
+                    "[watch] {disk_path}#part{n}: ext4 detected but no free drive letter"
+                );
+                return;
+            }
+        };
+
+        println!(
+            "[watch] ext4 detected on {disk_path}#part{n} -> mounting on {mount_letter}:"
+        );
 
         let exe = match std::env::current_exe() {
             Ok(p) => p,
@@ -324,70 +394,29 @@ mod imp {
             }
         };
         let drive_arg = format!("{mount_letter}:");
-        match Command::new(&exe)
-            .arg("mount")
-            .arg(&dev)
-            .arg("--drive")
-            .arg(&drive_arg)
-            .spawn()
-        {
+        let mut cmd = Command::new(&exe);
+        cmd.arg("mount").arg(disk_path).arg("--drive").arg(&drive_arg);
+        if n > 0 {
+            cmd.arg("--part").arg(n.to_string());
+        }
+        match cmd.spawn() {
             Ok(child) => {
-                let mut st = match state.lock() {
-                    Ok(g) => g,
-                    Err(_) => return,
-                };
-                // Track by the *source* device path so removal lookups
-                // match what Windows reports.
-                st.children.insert(dev.clone(), child);
-                // Stash the mount letter in a tiny side-channel so the
-                // removal log can show "unmounted from F:". We piggyback
-                // on a separate map to keep the Child handling unchanged.
-                let _ = mount_letters().lock().map(|mut m| {
-                    m.insert(dev, mount_letter);
-                });
+                if let Ok(mut st) = state.lock() {
+                    st.mounts.insert(
+                        (disk_path.to_string(), n),
+                        MountedChild {
+                            child,
+                            letter: mount_letter,
+                        },
+                    );
+                }
             }
             Err(e) => {
-                eprintln!("[watch] spawn `ext4 mount {dev} --drive {drive_arg}` failed: {e}");
+                eprintln!(
+                    "[watch] spawn `ext4 mount {disk_path} --drive {drive_arg}{}` failed: {e}",
+                    if n > 0 { format!(" --part {n}") } else { String::new() }
+                );
             }
         }
-    }
-
-    /// `DBT_DEVICEREMOVECOMPLETE` for a volume: kill the matching child.
-    fn handle_removal(state: &Mutex<State>, letter: char) {
-        let dev = format!("\\\\.\\{letter}:");
-        let mut st = match state.lock() {
-            Ok(g) => g,
-            Err(_) => return,
-        };
-        if let Some(mut child) = st.children.remove(&dev) {
-            let mount_letter_str = mount_letters()
-                .lock()
-                .ok()
-                .and_then(|mut m| m.remove(&dev))
-                .map(|c| format!("{c}:"))
-                .unwrap_or_else(|| "?".into());
-            // Best-effort: WinFsp's Drop in the child should still
-            // tear the mount down once the process exits.
-            let _ = child.kill();
-            let _ = child.wait();
-            println!("[watch] {dev} removed → unmounted from {mount_letter_str}");
-        }
-    }
-
-    /// Tiny side-table keyed by source device → mount letter, just for
-    /// logging on removal. Not needed for correctness; a clean impl
-    /// would fold this into `State.children` as `(Child, char)` instead.
-    fn mount_letters() -> &'static Mutex<HashMap<String, char>> {
-        static M: OnceLock<Mutex<HashMap<String, char>>> = OnceLock::new();
-        M.get_or_init(|| Mutex::new(HashMap::new()))
-    }
-
-    // OsStr → wide silencer kept for potential future use (path
-    // conversion when probing whole-disk arrivals via PhysicalDriveN).
-    // TODO(whole-disk): when DBT_DEVTYP_HANDLE / PhysicalDriveN events
-    // arrive, walk partition::list_from_source and probe each slice.
-    #[allow(dead_code)]
-    fn os_to_wide(s: &OsStr) -> Vec<u16> {
-        s.encode_wide().chain(std::iter::once(0)).collect()
     }
 }

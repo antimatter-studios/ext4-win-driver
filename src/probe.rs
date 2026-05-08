@@ -2,9 +2,10 @@
 //! subcommand and the SCM service variant.
 //!
 //! Most of this module is filesystem-agnostic: drive-letter selection,
-//! drive-mask diffing across `WM_DEVICECHANGE` events, raw-block
-//! reading. The one ext4-specific bit is [`is_ext4`], which checks the
-//! 2-byte superblock magic. When this code is extracted into the
+//! the disk device-interface class GUID, parsing the device path out
+//! of a `WM_DEVICECHANGE` payload, raw-block reading. The one
+//! ext4-specific bit is [`is_ext4`], which checks the 2-byte
+//! superblock magic. When this code is extracted into the
 //! `winfsp-fs-skeleton` project that bit becomes a `FsBackend::detect`
 //! trait method -- everything else stays.
 //!
@@ -67,44 +68,6 @@ pub fn probe_path(path: &Path) -> Result<bool> {
     Ok(is_ext4(&buf))
 }
 
-/// Snapshot of which drive letters are currently mounted, in
-/// `GetLogicalDrives` bitmask form (bit N = drive A+N).
-#[cfg(target_os = "windows")]
-pub fn current_drive_mask() -> u32 {
-    use windows_sys::Win32::Storage::FileSystem::GetLogicalDrives;
-    unsafe { GetLogicalDrives() }
-}
-
-/// Diff `prev_mask` against the current drive-letter mask. Returns
-/// `(current_mask, added_letters, removed_letters)`.
-///
-/// Used by the watch + service modules to react to volume arrivals
-/// without parsing `DEV_BROADCAST_VOLUME::dbcv_unitmask` from the
-/// `WM_DEVICECHANGE` payload — the message is just a wake-up; this
-/// function is the source of truth for what changed. Sidesteps the
-/// fact that `RegisterDeviceNotificationW` only accepts
-/// `DEV_BROADCAST_DEVICEINTERFACE_W` (with `GUID_DEVINTERFACE_VOLUME`)
-/// or `DEV_BROADCAST_HANDLE` filters; the unitmask path required
-/// `DEV_BROADCAST_VOLUME`, which the API rejects with
-/// ERROR_INVALID_DATA.
-#[cfg(target_os = "windows")]
-pub fn diff_drives(prev_mask: u32) -> (u32, Vec<char>, Vec<char>) {
-    let cur = current_drive_mask();
-    let added_mask = cur & !prev_mask;
-    let removed_mask = prev_mask & !cur;
-    let mut added = Vec::new();
-    let mut removed = Vec::new();
-    for i in 0..26u32 {
-        if (added_mask >> i) & 1 != 0 {
-            added.push((b'A' + i as u8) as char);
-        }
-        if (removed_mask >> i) & 1 != 0 {
-            removed.push((b'A' + i as u8) as char);
-        }
-    }
-    (cur, added, removed)
-}
-
 /// Pick the lowest free drive letter in `E..=Z` (skipping ones already
 /// in use according to `GetLogicalDrives`). Returns `None` if none are
 /// free.
@@ -113,7 +76,8 @@ pub fn diff_drives(prev_mask: u32) -> (u32, Vec<char>, Vec<char>) {
 /// reservations the user expects to be sticky.
 #[cfg(target_os = "windows")]
 pub fn pick_drive_letter() -> Option<char> {
-    let in_use = current_drive_mask();
+    use windows_sys::Win32::Storage::FileSystem::GetLogicalDrives;
+    let in_use = unsafe { GetLogicalDrives() };
     // Bit 0 = A, bit 4 = E, ...
     for i in 4u32..26 {
         if (in_use >> i) & 1 == 0 {
@@ -123,19 +87,73 @@ pub fn pick_drive_letter() -> Option<char> {
     None
 }
 
-/// `GUID_DEVINTERFACE_VOLUME` — the device-interface class GUID for
-/// volume devices. Pass this in `DEV_BROADCAST_DEVICEINTERFACE_W`
-/// when registering for `WM_DEVICECHANGE` notifications via
-/// `RegisterDeviceNotificationW(.., DEVICE_NOTIFY_WINDOW_HANDLE)`.
-/// Defined in `<ioevent.h>` / `<wdm.h>` upstream; not surfaced by
-/// `windows-sys`, hence the inline literal.
+/// `GUID_DEVINTERFACE_DISK` -- physical disk device interface class.
+/// Pass this in `DEV_BROADCAST_DEVICEINTERFACE_W` when registering for
+/// `WM_DEVICECHANGE` notifications to receive disk arrival/removal
+/// events. Disk-level (rather than volume-level) subscription is
+/// required because Windows refuses to assign drive letters to
+/// partitions whose type code it doesn't recognise (e.g. `0x83`
+/// Linux), so a volume-level subscription would never fire for
+/// typical Linux ext4 SD cards.
 #[cfg(target_os = "windows")]
-pub const GUID_DEVINTERFACE_VOLUME: windows_sys::core::GUID = windows_sys::core::GUID {
-    data1: 0x53F5_630D,
+pub const GUID_DEVINTERFACE_DISK: windows_sys::core::GUID = windows_sys::core::GUID {
+    data1: 0x53F5_6307,
     data2: 0xB6BF,
     data3: 0x11D0,
     data4: [0x94, 0xF2, 0x00, 0xA0, 0xC9, 0x1E, 0xFB, 0x8B],
 };
+
+/// Pull the device path out of a `DEV_BROADCAST_DEVICEINTERFACE_W`
+/// pointer received via `WM_DEVICECHANGE` lparam. The struct's
+/// `dbcc_name` field is a flexible array of `u16`; the actual name
+/// length is `dbcc_size` minus the fixed-prefix size, terminated by
+/// the first null. Returns the path as a Rust `String` (the
+/// device-interface name path is always ASCII-printable in practice).
+///
+/// Caller must guarantee the pointer is valid for the duration of the
+/// call.
+///
+/// # Safety
+///
+/// `bdi` must point at a properly-aligned, fully-initialised
+/// `DEV_BROADCAST_DEVICEINTERFACE_W` whose `dbcc_size` covers the
+/// embedded `dbcc_name` payload. WM_DEVICECHANGE delivers exactly
+/// such pointers, so the foreground/service wndprocs satisfy this.
+#[cfg(target_os = "windows")]
+pub unsafe fn device_interface_name(
+    bdi: *const windows_sys::Win32::UI::WindowsAndMessaging::DEV_BROADCAST_DEVICEINTERFACE_W,
+) -> Option<String> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::UI::WindowsAndMessaging::DEV_BROADCAST_DEVICEINTERFACE_W;
+
+    if bdi.is_null() {
+        return None;
+    }
+    let total = (*bdi).dbcc_size as usize;
+    // Offset of `dbcc_name` within the struct: dbcc_size (u32, 4) +
+    // dbcc_devicetype (u32, 4) + dbcc_reserved (u32, 4) +
+    // dbcc_classguid (GUID, 16) = 28. We can't use `size_of - 2`
+    // because the struct is padded to its 4-byte alignment, so
+    // size_of returns 32 -- which would skip the first wide char of
+    // the name (so `\\?\STORAGE...` becomes `\?\STORAGE...`, an
+    // ERROR_INVALID_NAME path). offset_of! would be cleaner but
+    // requires Rust >= 1.77 -- pin the literal until we bump MSRV.
+    const DBCC_NAME_OFFSET: usize = 4 + 4 + 4 + 16;
+    if total <= DBCC_NAME_OFFSET {
+        return None;
+    }
+    let name_bytes = total - DBCC_NAME_OFFSET;
+    let name_chars = name_bytes / 2;
+    let ptr = (bdi as *const u8).add(DBCC_NAME_OFFSET) as *const u16;
+    let slice = std::slice::from_raw_parts(ptr, name_chars);
+    let trimmed = match slice.iter().position(|&c| c == 0) {
+        Some(n) => &slice[..n],
+        None => slice,
+    };
+    let s = OsString::from_wide(trimmed).into_string().ok()?;
+    Some(s)
+}
 
 #[cfg(test)]
 mod tests {
