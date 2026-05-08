@@ -563,6 +563,32 @@
       "mount_args": [],
       "_attempts": [],
       "_notes": "Placeholder for installer/Bundle.wxs coverage. MSI install + uninstall + right-click verb registration is Windows-only and mutates global state (Program Files, registry, ProgIDs). Unblock requires a sandboxed Windows VM snapshot the harness can revert between runs. Out of scope for the current foreground-mount-driven matrix."
+    },
+    "audit-post-verify-marker": {
+      "status": "blocked-needs-audit-cli",
+      "image": "ext4-basic.img",
+      "mount_args": [
+        "--rw"
+      ],
+      "_attempts": [],
+      "_notes": "Design marker for the post_verify hook. See docs/post-verify-hook.md. The intended shape (once `ext4 audit <image>` exists) is shown via the post_verify block below — the runner will execute it after a passing RW scenario, after the mount tears down. Today this scenario is parked at status blocked-needs-audit-cli so it doesn't claim time but stays visible when re-reading the matrix.",
+      "ops": [
+        {
+          "type": "write",
+          "path": "/audit-target.txt",
+          "content": "drives the audit command after unmount"
+        },
+        {
+          "type": "cat_via_mount",
+          "path": "/audit-target.txt",
+          "expect_size": 38,
+          "expect_content": "drives the audit command after unmount"
+        }
+      ],
+      "post_verify": {
+        "command": "{binary} audit {image}",
+        "expect_exit": 0
+      }
     }
   }
 }
