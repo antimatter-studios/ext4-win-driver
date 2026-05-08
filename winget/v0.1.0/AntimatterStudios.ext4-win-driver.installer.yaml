@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: AntimatterStudios.ext4-win-driver
+PackageVersion: 0.1.0
+InstallerType: burn
+Scope: machine
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+UpgradeBehavior: install
+ReleaseDate: 2026-05-08
+Installers:
+  # arm64 is what's attached to v0.1.0 today. SHA256 was computed from
+  # the released artefact.
+  - Architecture: arm64
+    InstallerUrl: https://github.com/antimatter-studios/ext4-win-driver/releases/download/v0.1.0/ext4-win-driver-0.1.0-arm64-Setup.exe
+    InstallerSha256: EE0248F05D0CD8A3A0AAF3C0726E5C259E676DFAA78D68BADD2A88DC7BC7FEC7
+  # x64 is uploaded to v0.1.0 by the GH Actions release workflow when
+  # the arm64-built tag is re-dispatched against an x64 runner. Update
+  # the SHA256 after the upload completes:
+  #   shasum -a 256 dist\ext4-win-driver-0.1.0-x64-Setup.exe
+  - Architecture: x64
+    InstallerUrl: https://github.com/antimatter-studios/ext4-win-driver/releases/download/v0.1.0/ext4-win-driver-0.1.0-x64-Setup.exe
+    InstallerSha256: TBD-AFTER-CI-UPLOAD
+ManifestType: installer
+ManifestVersion: 1.6.0
