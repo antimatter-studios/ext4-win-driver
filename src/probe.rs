@@ -2,11 +2,11 @@
 //! subcommand and the SCM service variant.
 //!
 //! Most of this module is filesystem-agnostic: drive-letter selection,
-//! `DEV_BROADCAST_VOLUME::dbcv_unitmask` decoding, raw-block reading. The
-//! one ext4-specific bit is [`is_ext4`], which checks the 2-byte
-//! superblock magic. When this code is extracted into the
+//! drive-mask diffing across `WM_DEVICECHANGE` events, raw-block
+//! reading. The one ext4-specific bit is [`is_ext4`], which checks the
+//! 2-byte superblock magic. When this code is extracted into the
 //! `winfsp-fs-skeleton` project that bit becomes a `FsBackend::detect`
-//! trait method — everything else stays.
+//! trait method -- everything else stays.
 //!
 //! Placed in its own module (rather than `watch::imp`) so `service.rs`
 //! can reuse the helpers without pulling in the foreground message-pump
@@ -67,18 +67,42 @@ pub fn probe_path(path: &Path) -> Result<bool> {
     Ok(is_ext4(&buf))
 }
 
-/// Decode `DEV_BROADCAST_VOLUME::dbcv_unitmask` (bit N = drive A+N)
-/// into the list of affected drive letters. Used by both the
-/// foreground watcher and the service.
+/// Snapshot of which drive letters are currently mounted, in
+/// `GetLogicalDrives` bitmask form (bit N = drive A+N).
 #[cfg(target_os = "windows")]
-pub fn unitmask_to_letters(mask: u32) -> Vec<char> {
-    let mut out = Vec::new();
+pub fn current_drive_mask() -> u32 {
+    use windows_sys::Win32::Storage::FileSystem::GetLogicalDrives;
+    unsafe { GetLogicalDrives() }
+}
+
+/// Diff `prev_mask` against the current drive-letter mask. Returns
+/// `(current_mask, added_letters, removed_letters)`.
+///
+/// Used by the watch + service modules to react to volume arrivals
+/// without parsing `DEV_BROADCAST_VOLUME::dbcv_unitmask` from the
+/// `WM_DEVICECHANGE` payload — the message is just a wake-up; this
+/// function is the source of truth for what changed. Sidesteps the
+/// fact that `RegisterDeviceNotificationW` only accepts
+/// `DEV_BROADCAST_DEVICEINTERFACE_W` (with `GUID_DEVINTERFACE_VOLUME`)
+/// or `DEV_BROADCAST_HANDLE` filters; the unitmask path required
+/// `DEV_BROADCAST_VOLUME`, which the API rejects with
+/// ERROR_INVALID_DATA.
+#[cfg(target_os = "windows")]
+pub fn diff_drives(prev_mask: u32) -> (u32, Vec<char>, Vec<char>) {
+    let cur = current_drive_mask();
+    let added_mask = cur & !prev_mask;
+    let removed_mask = prev_mask & !cur;
+    let mut added = Vec::new();
+    let mut removed = Vec::new();
     for i in 0..26u32 {
-        if (mask >> i) & 1 != 0 {
-            out.push((b'A' + i as u8) as char);
+        if (added_mask >> i) & 1 != 0 {
+            added.push((b'A' + i as u8) as char);
+        }
+        if (removed_mask >> i) & 1 != 0 {
+            removed.push((b'A' + i as u8) as char);
         }
     }
-    out
+    (cur, added, removed)
 }
 
 /// Pick the lowest free drive letter in `E..=Z` (skipping ones already
@@ -89,8 +113,7 @@ pub fn unitmask_to_letters(mask: u32) -> Vec<char> {
 /// reservations the user expects to be sticky.
 #[cfg(target_os = "windows")]
 pub fn pick_drive_letter() -> Option<char> {
-    use windows_sys::Win32::Storage::FileSystem::GetLogicalDrives;
-    let in_use = unsafe { GetLogicalDrives() };
+    let in_use = current_drive_mask();
     // Bit 0 = A, bit 4 = E, ...
     for i in 4u32..26 {
         if (in_use >> i) & 1 == 0 {
@@ -99,6 +122,20 @@ pub fn pick_drive_letter() -> Option<char> {
     }
     None
 }
+
+/// `GUID_DEVINTERFACE_VOLUME` — the device-interface class GUID for
+/// volume devices. Pass this in `DEV_BROADCAST_DEVICEINTERFACE_W`
+/// when registering for `WM_DEVICECHANGE` notifications via
+/// `RegisterDeviceNotificationW(.., DEVICE_NOTIFY_WINDOW_HANDLE)`.
+/// Defined in `<ioevent.h>` / `<wdm.h>` upstream; not surfaced by
+/// `windows-sys`, hence the inline literal.
+#[cfg(target_os = "windows")]
+pub const GUID_DEVINTERFACE_VOLUME: windows_sys::core::GUID = windows_sys::core::GUID {
+    data1: 0x53F5_630D,
+    data2: 0xB6BF,
+    data3: 0x11D0,
+    data4: [0x94, 0xF2, 0x00, 0xA0, 0xC9, 0x1E, 0xFB, 0x8B],
+};
 
 #[cfg(test)]
 mod tests {

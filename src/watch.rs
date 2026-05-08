@@ -2,10 +2,13 @@
 //!
 //! Runs as a foreground process. On Windows, listens for
 //! `WM_DEVICECHANGE` (`DBT_DEVICEARRIVAL` / `DBT_DEVICEREMOVECOMPLETE`)
-//! filtered to `DBT_DEVTYP_VOLUME`, probes each newly-arrived volume for
-//! an ext4 superblock, and on a hit spawns `ext4 mount <device> --drive
-//! <letter>` as a child process. On removal, kills the child so its
-//! WinFsp `Drop` tears the mount down cleanly.
+//! filtered to volume-class device-interface notifications
+//! (`GUID_DEVINTERFACE_VOLUME`), diffs `GetLogicalDrives` against the
+//! last seen mask to find which letter actually changed, probes each
+//! newly-arrived volume for an ext4 superblock, and on a hit spawns
+//! `ext4 mount <device> --drive <letter>` as a child process. On
+//! removal, kills the child so its WinFsp `Drop` tears the mount down
+//! cleanly.
 //!
 //! Self-contained: never links WinFsp directly. The current binary is
 //! re-exec'd with the `mount` subcommand — that subcommand is the one
@@ -57,8 +60,8 @@ mod imp {
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE, DBT_DEVTYP_VOLUME,
-        DEVICE_NOTIFY_WINDOW_HANDLE, DEV_BROADCAST_HDR, DEV_BROADCAST_VOLUME, DefWindowProcW,
+        CreateWindowExW, DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE, DBT_DEVTYP_DEVICEINTERFACE,
+        DEVICE_NOTIFY_WINDOW_HANDLE, DEV_BROADCAST_DEVICEINTERFACE_W, DefWindowProcW,
         DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW,
         HWND_MESSAGE, MSG, PostThreadMessageW, RegisterClassW, RegisterDeviceNotificationW,
         SetWindowLongPtrW, TranslateMessage, UnregisterClassW, UnregisterDeviceNotification,
@@ -85,11 +88,16 @@ mod imp {
 
     #[derive(Default)]
     struct State {
-        /// Drive-letter device path (`\\.\E:`) → spawned `ext4 mount` child.
+        /// Drive-letter device path (`\\.\E:`) -> spawned `ext4 mount` child.
         children: HashMap<String, Child>,
         /// Set on Ctrl-C / WM_QUIT path; the wndproc consults this so it
         /// stops spawning new mounts during shutdown.
         shutting_down: bool,
+        /// Last `GetLogicalDrives` snapshot. The wndproc diffs the
+        /// current mask against this on every WM_DEVICECHANGE arrival /
+        /// removal to find which letter(s) actually changed -- the
+        /// message itself is treated as a wake-up only.
+        last_drive_mask: u32,
     }
 
     pub fn run() -> Result<()> {
@@ -164,10 +172,18 @@ mod imp {
         // we own this freshly-created window.
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, state_ptr);
 
-        // Subscribe to filesystem-volume arrival/removal events.
-        let mut filter: DEV_BROADCAST_VOLUME = std::mem::zeroed();
-        filter.dbcv_size = std::mem::size_of::<DEV_BROADCAST_VOLUME>() as u32;
-        filter.dbcv_devicetype = DBT_DEVTYP_VOLUME;
+        // Subscribe to volume-class device-interface notifications.
+        // `RegisterDeviceNotificationW` only accepts
+        // DEV_BROADCAST_DEVICEINTERFACE_W (with a class GUID) or
+        // DEV_BROADCAST_HANDLE; passing DEV_BROADCAST_VOLUME -- which
+        // is what the WM_DEVICECHANGE *payload* uses for volume events
+        // -- is rejected with ERROR_INVALID_DATA. We ignore the
+        // notification's lparam and rely on `probe::diff_drives` from
+        // the wndproc as the source of truth for what changed.
+        let mut filter: DEV_BROADCAST_DEVICEINTERFACE_W = std::mem::zeroed();
+        filter.dbcc_size = std::mem::size_of::<DEV_BROADCAST_DEVICEINTERFACE_W>() as u32;
+        filter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
+        filter.dbcc_classguid = probe::GUID_DEVINTERFACE_VOLUME;
         let dev_handle = RegisterDeviceNotificationW(
             hwnd,
             &filter as *const _ as *const _,
@@ -179,6 +195,12 @@ mod imp {
                 "RegisterDeviceNotificationW failed: {}",
                 std::io::Error::last_os_error()
             ));
+        }
+
+        // Seed the drive-mask baseline before we start pumping so the
+        // first arrival sees a delta against the boot state, not 0.
+        if let Ok(mut s) = state().lock() {
+            s.last_drive_mask = probe::current_drive_mask();
         }
 
         println!("[watch] listening for ext4 volume arrivals. Ctrl-C to stop.");
@@ -230,22 +252,30 @@ mod imp {
     ) -> LRESULT {
         if msg == WM_DEVICECHANGE {
             let event = wparam as u32;
+            // Treat the message as a pure wake-up: diff the current
+            // drive-letter mask against the last seen one to discover
+            // what actually changed. The lparam payload would be a
+            // DEV_BROADCAST_DEVICEINTERFACE_W (since we registered with
+            // GUID_DEVINTERFACE_VOLUME), but converting its device path
+            // to a drive letter is fiddly; GetLogicalDrives is the
+            // shorter route.
             if event == DBT_DEVICEARRIVAL || event == DBT_DEVICEREMOVECOMPLETE {
-                let hdr = lparam as *const DEV_BROADCAST_HDR;
-                if !hdr.is_null() && (*hdr).dbch_devicetype == DBT_DEVTYP_VOLUME {
-                    let vol = lparam as *const DEV_BROADCAST_VOLUME;
-                    let unitmask = (*vol).dbcv_unitmask;
-                    let state_ptr =
-                        GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Mutex<State>;
-                    if !state_ptr.is_null() {
-                        let state: &Mutex<State> = &*state_ptr;
-                        for letter in probe::unitmask_to_letters(unitmask) {
-                            if event == DBT_DEVICEARRIVAL {
-                                handle_arrival(state, letter);
-                            } else {
-                                handle_removal(state, letter);
-                            }
-                        }
+                let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Mutex<State>;
+                if !state_ptr.is_null() {
+                    let state: &Mutex<State> = &*state_ptr;
+                    let prev = state
+                        .lock()
+                        .map(|s| s.last_drive_mask)
+                        .unwrap_or_else(|_| probe::current_drive_mask());
+                    let (cur, added, removed) = probe::diff_drives(prev);
+                    if let Ok(mut s) = state.lock() {
+                        s.last_drive_mask = cur;
+                    }
+                    for letter in added {
+                        handle_arrival(state, letter);
+                    }
+                    for letter in removed {
+                        handle_removal(state, letter);
                     }
                 }
             }

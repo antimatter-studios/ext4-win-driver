@@ -110,8 +110,8 @@ mod imp {
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE, DBT_DEVTYP_VOLUME,
-        DEVICE_NOTIFY_WINDOW_HANDLE, DEV_BROADCAST_HDR, DEV_BROADCAST_VOLUME, DefWindowProcW,
+        CreateWindowExW, DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE, DBT_DEVTYP_DEVICEINTERFACE,
+        DEVICE_NOTIFY_WINDOW_HANDLE, DEV_BROADCAST_DEVICEINTERFACE_W, DefWindowProcW,
         DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW,
         HWND_MESSAGE, MSG, PostThreadMessageW, RegisterClassW, RegisterDeviceNotificationW,
         SetWindowLongPtrW, TranslateMessage, UnregisterClassW, UnregisterDeviceNotification,
@@ -221,7 +221,7 @@ mod imp {
         let state_ptr = state() as *const Mutex<State> as isize;
         let pump = unsafe { Pump::open(state_ptr)? };
 
-        // Now we're ready — accept Stop + Shutdown.
+        // Now we're ready -- accept Stop + Shutdown.
         handle.set_service_status(ServiceStatus {
             service_type: ServiceType::OWN_PROCESS,
             current_state: ServiceState::Running,
@@ -318,9 +318,18 @@ mod imp {
 
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, state_ptr);
 
-            let mut filter: DEV_BROADCAST_VOLUME = std::mem::zeroed();
-            filter.dbcv_size = std::mem::size_of::<DEV_BROADCAST_VOLUME>() as u32;
-            filter.dbcv_devicetype = DBT_DEVTYP_VOLUME;
+            // Volume-class device-interface filter. Using
+            // DEV_BROADCAST_VOLUME would match the WM_DEVICECHANGE
+            // payload but `RegisterDeviceNotificationW` only accepts
+            // DEV_BROADCAST_DEVICEINTERFACE_W or DEV_BROADCAST_HANDLE
+            // -- DEV_BROADCAST_VOLUME is rejected with
+            // ERROR_INVALID_DATA (13). The wndproc treats arrivals as
+            // a wake-up and uses `probe::diff_drives` to find the
+            // actually-changed letter(s).
+            let mut filter: DEV_BROADCAST_DEVICEINTERFACE_W = std::mem::zeroed();
+            filter.dbcc_size = std::mem::size_of::<DEV_BROADCAST_DEVICEINTERFACE_W>() as u32;
+            filter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
+            filter.dbcc_classguid = probe::GUID_DEVINTERFACE_VOLUME;
             let dev_handle = RegisterDeviceNotificationW(
                 hwnd,
                 &filter as *const _ as *const _,
@@ -332,6 +341,14 @@ mod imp {
                     "RegisterDeviceNotificationW failed: {}",
                     std::io::Error::last_os_error()
                 ));
+            }
+
+            // Seed the drive-mask baseline so the first
+            // WM_DEVICECHANGE diffs against the boot-time set rather
+            // than 0 (which would treat every existing C:/D: as
+            // "newly arrived").
+            if let Ok(mut s) = state().lock() {
+                s.last_drive_mask = probe::current_drive_mask();
             }
 
             Ok(Pump {
@@ -388,6 +405,11 @@ mod imp {
         /// mounted.
         mounts: HashMap<String, char>,
         shutting_down: bool,
+        /// Last `GetLogicalDrives` snapshot. The wndproc diffs the
+        /// current mask against this on every WM_DEVICECHANGE arrival /
+        /// removal to find which letter(s) actually changed -- the
+        /// message itself is treated as a wake-up only.
+        last_drive_mask: u32,
     }
 
     unsafe extern "system" fn wnd_proc(
@@ -398,22 +420,28 @@ mod imp {
     ) -> LRESULT {
         if msg == WM_DEVICECHANGE {
             let event = wparam as u32;
+            // Wake-up-only treatment: ignore the lparam payload (it's
+            // a DEV_BROADCAST_DEVICEINTERFACE_W, parsing the device
+            // path back to a drive letter is fiddly), use a
+            // GetLogicalDrives diff against the last seen mask as the
+            // source of truth for what changed.
             if event == DBT_DEVICEARRIVAL || event == DBT_DEVICEREMOVECOMPLETE {
-                let hdr = lparam as *const DEV_BROADCAST_HDR;
-                if !hdr.is_null() && (*hdr).dbch_devicetype == DBT_DEVTYP_VOLUME {
-                    let vol = lparam as *const DEV_BROADCAST_VOLUME;
-                    let unitmask = (*vol).dbcv_unitmask;
-                    let state_ptr =
-                        GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Mutex<State>;
-                    if !state_ptr.is_null() {
-                        let state: &Mutex<State> = &*state_ptr;
-                        for letter in probe::unitmask_to_letters(unitmask) {
-                            if event == DBT_DEVICEARRIVAL {
-                                handle_arrival(state, letter);
-                            } else {
-                                handle_removal(state, letter);
-                            }
-                        }
+                let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Mutex<State>;
+                if !state_ptr.is_null() {
+                    let state: &Mutex<State> = &*state_ptr;
+                    let prev = state
+                        .lock()
+                        .map(|s| s.last_drive_mask)
+                        .unwrap_or_else(|_| probe::current_drive_mask());
+                    let (cur, added, removed) = probe::diff_drives(prev);
+                    if let Ok(mut s) = state.lock() {
+                        s.last_drive_mask = cur;
+                    }
+                    for letter in added {
+                        handle_arrival(state, letter);
+                    }
+                    for letter in removed {
+                        handle_removal(state, letter);
                     }
                 }
             }
