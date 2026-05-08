@@ -10,6 +10,8 @@ mod cmd;
 mod device;
 mod mount;
 mod partition;
+mod probe;
+mod service;
 mod watch;
 
 #[derive(Parser)]
@@ -99,6 +101,14 @@ enum Cmd {
     /// auto-mount them by spawning `ext4 mount` as a child process.
     /// Windows-only; on other targets prints a hint and exits.
     Watch,
+    /// Run as a Windows Service (SCM dispatcher). Same behaviour as
+    /// `watch`, but mounts are launched through WinFsp.Launcher's
+    /// `launchctl-<arch>.exe` so they appear in the active console
+    /// session instead of session 0. Intended to be invoked by the
+    /// SCM, not run interactively. Windows-only; non-Windows builds
+    /// print a hint and exit.
+    #[cfg(windows)]
+    Service,
 }
 
 fn main() -> Result<()> {
@@ -125,5 +135,7 @@ fn main() -> Result<()> {
             mount::run(m, &drive)
         }
         Cmd::Watch => watch::run(),
+        #[cfg(windows)]
+        Cmd::Service => service::run(),
     }
 }
