@@ -93,6 +93,7 @@
         <ServiceControl
             Id="ExtFsWatcherSvcCtl"
             Name="ExtFsWatcher"
+            Start="install"
             Stop="both"
             Remove="both"
             Wait="yes" />
