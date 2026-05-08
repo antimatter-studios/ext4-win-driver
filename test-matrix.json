@@ -235,9 +235,334 @@
       "ops": [
         {
           "type": "ls",
-          "path": "/"
+          "path": "/",
+          "extra": "--part 1"
         }
       ]
+    },
+    "basic-stat-test-txt": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "mount_args": [],
+      "_attempts": [],
+      "_notes": "Stat shape check on /test.txt via the templated `stat` op. expect_stdout_contains substrings span size/mode/file_type so any drift in stat formatting OR the underlying inode is caught. Capture: ./target/release/ext4 stat ../rust-fs-ext4/test-disks/ext4-basic.img /test.txt",
+      "ops": [
+        {
+          "type": "stat",
+          "path": "/test.txt",
+          "expect_stdout_contains": "size:        16"
+        },
+        {
+          "type": "stat",
+          "path": "/test.txt",
+          "expect_stdout_contains": "mode:        0o644"
+        },
+        {
+          "type": "stat",
+          "path": "/test.txt",
+          "expect_stdout_contains": "file_type:   1"
+        }
+      ]
+    },
+    "basic-stat-symlink": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "mount_args": [],
+      "_attempts": [],
+      "_notes": "Symlink coverage. The CLI's `cat` does NOT dereference symlinks (errors with 'not a regular file'); we therefore exercise the link via `stat` instead — file_type 7 = ext4 symlink, size 8 = strlen(\"test.txt\"). Capture: ./target/release/ext4 stat ../rust-fs-ext4/test-disks/ext4-basic.img /link.txt",
+      "ops": [
+        {
+          "type": "stat",
+          "path": "/link.txt",
+          "expect_stdout_contains": "file_type:   7"
+        },
+        {
+          "type": "stat",
+          "path": "/link.txt",
+          "expect_stdout_contains": "size:        8"
+        }
+      ]
+    },
+    "basic-tree-hash": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "mount_args": [],
+      "_attempts": [],
+      "_notes": "Recursive tree shape pinned via stdout sha256. ext4 CLI emits LF-only line endings on every platform (Rust println! does not translate on Windows), so the hash is portable. Capture: ./target/release/ext4 tree ../rust-fs-ext4/test-disks/ext4-basic.img | shasum -a 256",
+      "ops": [
+        {
+          "type": "tree",
+          "expect_stdout_sha256": "5cec65ca5ab421cabac1a37a17bbead0df7093f94e8c83eebaa51dcac64218a2"
+        }
+      ]
+    },
+    "basic-info-volume": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "mount_args": [],
+      "_attempts": [],
+      "_notes": "Volume-level smoke. Asserts a stable substring (block_size + inode_size) so superblock decoding regressions trip a verdict. Requires the new `info` template added to harness.toml. Capture: ./target/release/ext4 info ../rust-fs-ext4/test-disks/ext4-basic.img",
+      "ops": [
+        {
+          "type": "info",
+          "expect_stdout_contains": "block_size:     4096"
+        },
+        {
+          "type": "info",
+          "expect_stdout_contains": "inode_size:     256"
+        },
+        {
+          "type": "info",
+          "expect_stdout_contains": "label:          \"testvolume\""
+        }
+      ]
+    },
+    "basic-parts-no-table": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "mount_args": [],
+      "_attempts": [],
+      "_notes": "Negative path: ext4-basic.img is a bare filesystem with no MBR/GPT. `parts` must exit non-zero. The error text goes to stderr (anyhow), so we assert exit code only. Capture: ./target/release/ext4 parts ../rust-fs-ext4/test-disks/ext4-basic.img ; echo $?  -> 1",
+      "ops": [
+        {
+          "type": "parts",
+          "allow_nonzero_exit": true,
+          "expect_exit": 1
+        }
+      ]
+    },
+    "htree-listing-hash": {
+      "status": "pending",
+      "image": "ext4-htree.img",
+      "mount_args": [],
+      "_attempts": [],
+      "_notes": "Hash the bigdir listing (258 entries). Beats expect_count alone — drift in entry ordering or any single name shifts the hash. Capture: ./target/release/ext4 ls ../rust-fs-ext4/test-disks/ext4-htree.img /bigdir | shasum -a 256",
+      "ops": [
+        {
+          "type": "ls",
+          "path": "/bigdir",
+          "expect_stdout_sha256": "eecb5943cd327c6e4f94bbc8a0f0b27738ced951f4cb3b9235ae37a7313f70da"
+        }
+      ]
+    },
+    "deep-extents-stat": {
+      "status": "pending",
+      "image": "ext4-deep-extents.img",
+      "mount_args": [],
+      "_attempts": [],
+      "_notes": "Verify the sparse.bin file under deeper extent trees: 16 MiB logical size, regular-file type. Pairs with deep-extents-cat (which validates dense.txt content). Capture: ./target/release/ext4 stat ../rust-fs-ext4/test-disks/ext4-deep-extents.img /sparse.bin",
+      "ops": [
+        {
+          "type": "stat",
+          "path": "/sparse.bin",
+          "expect_stdout_contains": "size:        16777216"
+        },
+        {
+          "type": "stat",
+          "path": "/sparse.bin",
+          "expect_stdout_contains": "file_type:   1"
+        }
+      ]
+    },
+    "inline-data-stat": {
+      "status": "pending",
+      "image": "ext4-inline.img",
+      "mount_args": [],
+      "_attempts": [],
+      "_notes": "Stat-side counterpart to inline-data-cat. tiny.txt is 12 bytes ('tiny inline\\n') — small enough to live in the inode. medium.txt overflows inline and falls back to extents. Capture: ./target/release/ext4 stat ../rust-fs-ext4/test-disks/ext4-inline.img /tiny.txt ; ./target/release/ext4 stat ../rust-fs-ext4/test-disks/ext4-inline.img /medium.txt",
+      "ops": [
+        {
+          "type": "stat",
+          "path": "/tiny.txt",
+          "expect_stdout_contains": "size:        12"
+        },
+        {
+          "type": "stat",
+          "path": "/medium.txt",
+          "expect_stdout_contains": "size:        100"
+        }
+      ]
+    },
+    "xattr-cat-content": {
+      "status": "pending",
+      "image": "ext4-xattr.img",
+      "mount_args": [],
+      "_attempts": [],
+      "_notes": "Until the `getxattr` CLI exists (see xattr-getxattr scenario), at least confirm files in an xattr-tagged image still read back correctly via templated cat. tagged.txt body is 'has xattrs\\n' (11 bytes). Capture: ./target/release/ext4 cat ../rust-fs-ext4/test-disks/ext4-xattr.img /tagged.txt | shasum -a 256",
+      "ops": [
+        {
+          "type": "cat",
+          "path": "/tagged.txt",
+          "expect_stdout_sha256": "211681a64dfd209d01a997a527c1706d50945fa2559c1caa289dbb2c1517ebe1"
+        }
+      ]
+    },
+    "whole-disk-parts": {
+      "status": "pending",
+      "image": "ext4-whole-disk.img",
+      "mount_args": [],
+      "_attempts": [],
+      "_notes": "Read the GPT directly (no mount, no --part). One Linux-fs partition at LBA 2048, 32768 sectors. Capture: ./target/release/ext4 parts ../rust-fs-ext4/test-disks/ext4-whole-disk.img",
+      "ops": [
+        {
+          "type": "parts",
+          "expect_stdout_contains": "GPT:linux"
+        },
+        {
+          "type": "parts",
+          "expect_stdout_contains": "2048"
+        }
+      ]
+    },
+    "rw-rename": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "mount_args": [
+        "--rw"
+      ],
+      "_attempts": [],
+      "_notes": "RW rename round-trip via the harness's builtin ops: write -> rename -> cat_via_mount. Catches dirent unlink+relink in the parent dir. Capture: content is harness-supplied; size/sha computed from 'rename payload' (15 bytes).",
+      "ops": [
+        {
+          "type": "write",
+          "path": "/before.txt",
+          "content": "rename payload"
+        },
+        {
+          "type": "rename",
+          "from": "/before.txt",
+          "to": "/after.txt"
+        },
+        {
+          "type": "cat_via_mount",
+          "path": "/after.txt",
+          "expect_size": 14,
+          "expect_content": "rename payload",
+          "expect_sha256": "11b27528638c55a418f5e289b0120a0547bdbb7af4baa9f2944ded404d596eb0"
+        }
+      ]
+    },
+    "rw-mkdir-rmdir": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "mount_args": [
+        "--rw"
+      ],
+      "_attempts": [],
+      "_notes": "mkdir/rmdir lifecycle. After rmdir the templated `ls /` must NOT include scratch — expect_names is the post-state of the root after rollback, equal to the original basic-ro-list expectation. Captured directly from ./target/release/ext4 ls ../rust-fs-ext4/test-disks/ext4-basic.img /",
+      "ops": [
+        {
+          "type": "mkdir",
+          "path": "/scratch"
+        },
+        {
+          "type": "rmdir",
+          "path": "/scratch"
+        },
+        {
+          "type": "ls",
+          "path": "/",
+          "expect_names": [
+            ".",
+            "..",
+            "link.txt",
+            "lost+found",
+            "subdir",
+            "test.txt"
+          ]
+        }
+      ]
+    },
+    "rw-overwrite": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "mount_args": [
+        "--rw"
+      ],
+      "_attempts": [],
+      "_notes": "Overwrite an existing file (test.txt, originally 16 bytes 'hello from ext4\\n') with new shorter content. Validates truncate + rewrite path. Payload 'overwritten' = 11 bytes. sha256 captured via: printf 'overwritten' | shasum -a 256 -> fb428d788e6efaec29dc4a9b3d0b3cf3d2295eb7ffc30f111ac11c4af1dfc118",
+      "ops": [
+        {
+          "type": "write",
+          "path": "/test.txt",
+          "content": "overwritten"
+        },
+        {
+          "type": "cat_via_mount",
+          "path": "/test.txt",
+          "expect_size": 11,
+          "expect_content": "overwritten",
+          "expect_sha256": "fb428d788e6efaec29dc4a9b3d0b3cf3d2295eb7ffc30f111ac11c4af1dfc118"
+        }
+      ]
+    },
+    "rw-unlink": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "mount_args": [
+        "--rw"
+      ],
+      "_attempts": [],
+      "_notes": "Create + unlink. After unlink, ls / must match the original 6-entry root (i.e. doomed.txt is gone). Catches inode-leak / dirent-unlink regressions in one shot.",
+      "ops": [
+        {
+          "type": "write",
+          "path": "/doomed.txt",
+          "content": "rm me"
+        },
+        {
+          "type": "unlink",
+          "path": "/doomed.txt"
+        },
+        {
+          "type": "ls",
+          "path": "/",
+          "expect_names": [
+            ".",
+            "..",
+            "link.txt",
+            "lost+found",
+            "subdir",
+            "test.txt"
+          ]
+        }
+      ]
+    },
+    "rw-write-then-readback-via-cli": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "mount_args": [
+        "--rw"
+      ],
+      "_attempts": [],
+      "_notes": "Marker scenario for the future post_verify hook (see docs/post-verify-hook.md). Today: write via mount, read back via mount inside the same scenario. Tomorrow: post_verify re-mounts the image RO under the CLI to confirm on-disk durability after the WinFsp host exits. Until then, this scenario covers the in-mount round-trip; the post_verify shape lives in scenario `audit-post-verify-marker` below.",
+      "ops": [
+        {
+          "type": "write",
+          "path": "/persisted.txt",
+          "content": "should survive unmount"
+        },
+        {
+          "type": "cat_via_mount",
+          "path": "/persisted.txt",
+          "expect_size": 22,
+          "expect_content": "should survive unmount"
+        }
+      ]
+    },
+    "watch-volume-arrival-marker": {
+      "status": "blocked-needs-event-injection-harness",
+      "image": "",
+      "mount_args": [],
+      "_attempts": [],
+      "_notes": "Placeholder for `ext4 watch` coverage. The watch subcommand reacts to Windows volume-arrival WMI events; the matrix model has no way to inject one. Unblock requires either (a) a helper that uses VHD attach/detach to synthesize real arrival events on the test VM, or (b) refactoring watch.rs to expose its event handler as a callable function the harness can drive directly. Until then, manual smoke-testing on the VM is the only path."
+    },
+    "installer-msi-marker": {
+      "status": "blocked-needs-msi-test-runner",
+      "image": "",
+      "mount_args": [],
+      "_attempts": [],
+      "_notes": "Placeholder for installer/Bundle.wxs coverage. MSI install + uninstall + right-click verb registration is Windows-only and mutates global state (Program Files, registry, ProgIDs). Unblock requires a sandboxed Windows VM snapshot the harness can revert between runs. Out of scope for the current foreground-mount-driven matrix."
     }
   }
 }
