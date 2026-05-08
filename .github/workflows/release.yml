@@ -1,0 +1,140 @@
+# Build + attach Setup.exe / MSI to a GitHub Release on every `v*` tag,
+# for both x86_64 and aarch64 Windows. Uses native runners per arch
+# (windows-latest = x64, windows-11-arm = arm64) so we don't have to
+# fight cross-compilation against the gnullvm toolchain.
+#
+# Manual trigger via workflow_dispatch is wired so a maintainer can
+# rerun the matrix without bumping a tag (handy for fixing a release
+# upload that failed mid-flight).
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.1.0). Required when running manually.'
+        required: true
+        default: ''
+
+permissions:
+  contents: write   # gh release upload needs this
+
+jobs:
+  build:
+    name: build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            rust_target: x86_64-pc-windows-gnullvm
+            llvm_mingw_archive: llvm-mingw-20260421-ucrt-x86_64.zip
+          - arch: arm64
+            runner: windows-11-arm
+            rust_target: aarch64-pc-windows-gnullvm
+            llvm_mingw_archive: llvm-mingw-20260421-ucrt-aarch64.zip
+    runs-on: ${{ matrix.runner }}
+    env:
+      LLVM_MINGW_VER: 20260421
+      # Pin -- bumping requires verifying winfsp-rs still builds cleanly
+      # against the toolchain. The same archives are what
+      # MartinStorsjo.LLVM-MinGW.UCRT installs via winget; we fetch
+      # them directly to avoid winget's interactive prompts.
+
+    steps:
+      - name: checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: install Rust + gnullvm target
+        shell: pwsh
+        run: |
+          rustup install stable
+          rustup default stable
+          rustup target add ${{ matrix.rust_target }}
+          rustc --version
+
+      - name: install LLVM-MinGW (ucrt, ${{ matrix.arch }})
+        shell: pwsh
+        run: |
+          $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/${{ env.LLVM_MINGW_VER }}/${{ matrix.llvm_mingw_archive }}"
+          $zip = "$env:RUNNER_TEMP\llvm-mingw.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath "$env:RUNNER_TEMP\llvm-mingw" -Force
+          $extracted = Get-ChildItem "$env:RUNNER_TEMP\llvm-mingw" -Directory | Select-Object -First 1
+          $bin = Join-Path $extracted.FullName 'bin'
+          "Adding $bin to PATH"
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+
+      - name: install LLVM (for bindgen/libclang)
+        shell: pwsh
+        run: |
+          choco install llvm --yes --no-progress
+          $libclang = 'C:\Program Files\LLVM\bin'
+          "LIBCLANG_PATH=$libclang" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: install WinFsp (build-time headers + libs)
+        shell: pwsh
+        run: |
+          choco install winfsp --yes --no-progress
+          # WinFsp installs to "C:\Program Files (x86)\WinFsp\" on x64
+          # hosts and to "C:\Program Files\WinFsp\" on arm64; winfsp-rs
+          # auto-discovers via the registry.
+
+      - name: install WiX 7 + extensions
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix
+          wix eula accept wix7
+          wix extension add WixToolset.UI.wixext
+          wix extension add WixToolset.Util.wixext
+          wix extension add WixToolset.BootstrapperApplications.wixext
+          wix --version
+
+      - name: cargo build --release --features mount,service
+        shell: pwsh
+        run: |
+          cargo build --release --features mount,service --target ${{ matrix.rust_target }}
+          $exe = "target\${{ matrix.rust_target }}\release\ext4.exe"
+          if (-not (Test-Path $exe)) { throw "Build did not produce $exe" }
+          "Built $exe ($((Get-Item $exe).Length) bytes)"
+
+      - name: installer/build.ps1 (-Arch ${{ matrix.arch }})
+        shell: pwsh
+        run: |
+          $exe = "target\${{ matrix.rust_target }}\release\ext4.exe"
+          installer\build.ps1 -ExePath $exe -Arch ${{ matrix.arch }}
+
+      - name: upload Setup.exe + MSI as workflow artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ext4-win-driver-${{ matrix.arch }}
+          path: |
+            dist/ext4-win-driver-*-${{ matrix.arch }}-Setup.exe
+            dist/ext4-win-driver-*-${{ matrix.arch }}.msi
+          if-no-files-found: error
+
+      - name: attach to GitHub Release (tag push only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          gh release upload $tag (Get-ChildItem dist\ext4-win-driver-*-${{ matrix.arch }}-Setup.exe).FullName --clobber
+          gh release upload $tag (Get-ChildItem dist\ext4-win-driver-*-${{ matrix.arch }}.msi).FullName --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: attach to GitHub Release (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          $tag = '${{ inputs.tag }}'
+          if (-not $tag) { throw "tag input is required for workflow_dispatch" }
+          gh release upload $tag (Get-ChildItem dist\ext4-win-driver-*-${{ matrix.arch }}-Setup.exe).FullName --clobber
+          gh release upload $tag (Get-ChildItem dist\ext4-win-driver-*-${{ matrix.arch }}.msi).FullName --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
