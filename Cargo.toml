@@ -26,7 +26,9 @@ anyhow = "1"
 winfsp-fs-skeleton = { path = "vendor/winfsp-fs-skeleton", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
+# Aligned with winfsp-fs-skeleton's pin so cargo resolves a single
+# windows-sys instance rather than compiling 0.59 + 0.61 side by side.
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_Storage_FileSystem",
