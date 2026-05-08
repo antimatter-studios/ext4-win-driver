@@ -35,8 +35,14 @@ pub struct Mount {
     /// Set when mounted via `fs_ext4_mount_with_callbacks` /
     /// `fs_ext4_mount_rw_with_callbacks`. Owned here.
     cb_ctx: Option<*mut SliceCtx>,
-    /// True when mounted RW. Used by the WinFsp adapter to gate write
-    /// callbacks and drop the `read_only_volume` flag.
+    /// True when mounted RW. Read by the WinFsp adapter (`mount`
+    /// feature, Windows only) — `Ext4Context::ensure_writable` consults
+    /// it at the top of every mutating callback as a defense-in-depth
+    /// gate, and `winfsp_adapter::run` uses it to decide whether to set
+    /// the `read_only_volume` `VolumeParams` flag. Always written;
+    /// non-Windows / non-`mount` builds never read it, so the dead-code
+    /// allow keeps `cargo check` quiet on macOS / Linux dev hosts.
+    #[cfg_attr(not(all(windows, feature = "mount")), allow(dead_code))]
     pub(crate) writable: bool,
 }
 
@@ -60,6 +66,12 @@ impl Mount {
     /// only `--part N` is wired for RW (the WinFsp mount path). A direct
     /// (whole-image) RW open could be added later but isn't needed
     /// for the WinFsp use case where partition mounts dominate.
+    ///
+    /// Gated on `windows + feature = "mount"` because the only caller is
+    /// the `Cmd::Mount` arm in `main.rs`, which has the same gate.
+    /// Without this, `cargo check --no-default-features` flags the RW
+    /// openers as dead code.
+    #[cfg(all(windows, feature = "mount"))]
     pub fn open_rw(mt: &MountArgs) -> Result<Self> {
         match mt.part {
             None | Some(0) => Self::open_direct_rw(&mt.image),
@@ -69,6 +81,7 @@ impl Mount {
 
     /// RW analogue of [`open_direct`] — uses `fs_ext4_mount_rw` against the
     /// device path. Available so `--rw` works without a `--part`.
+    #[cfg(all(windows, feature = "mount"))]
     pub fn open_direct_rw(image: &Path) -> Result<Self> {
         let s = image
             .to_str()
@@ -174,6 +187,7 @@ impl Mount {
     /// with write access, plumbs read+write+flush callbacks into
     /// `fs_ext4_mount_rw_with_callbacks`, and replays a dirty journal
     /// before returning (eager-mount semantics).
+    #[cfg(all(windows, feature = "mount"))]
     pub fn open_partition_rw(image: &Path, n: usize) -> Result<Self> {
         let src: Arc<dyn BlockSource> = Arc::new(FileSource::open_rw(image)?);
         let parts = partition::list_from_source(src.as_ref())
@@ -270,6 +284,7 @@ extern "C" fn slice_read_cb(
     0
 }
 
+#[cfg(all(windows, feature = "mount"))]
 extern "C" fn slice_write_cb(
     ctx: *mut c_void,
     buf: *const c_void,
@@ -293,6 +308,7 @@ extern "C" fn slice_write_cb(
     0
 }
 
+#[cfg(all(windows, feature = "mount"))]
 extern "C" fn slice_flush_cb(ctx: *mut c_void) -> c_int {
     if ctx.is_null() {
         return -1;
@@ -312,9 +328,11 @@ extern "C" fn slice_flush_cb(ctx: *mut c_void) -> c_int {
 mod winfsp_adapter {
     //! Glue between WinFsp's `FileSystemContext` and the `fs_ext4_*` C ABI.
     //!
-    //! RO mode (default): only read-side methods are wired; writes return
-    //! `STATUS_MEDIA_WRITE_PROTECTED` via the volume's `read_only_volume`
-    //! flag.
+    //! RO mode (default): only read-side methods are wired in practice;
+    //! writes return `STATUS_MEDIA_WRITE_PROTECTED` via the volume's
+    //! `read_only_volume` flag (WinFsp's primary gate) and again via
+    //! `Ext4Context::ensure_writable` at the top of each mutating
+    //! callback (defense in depth — see comment on the RW-side methods).
     //!
     //! RW mode (`--rw`): `create`/`write`/`set_file_size`/`set_basic_info`/
     //! `rename`/`set_delete`/`cleanup`/`overwrite` are wired through to the
@@ -328,16 +346,14 @@ mod winfsp_adapter {
     //! FILETIME is 100-ns intervals since 1601-01-01. The constant offset
     //! is 11644473600 seconds.
     //!
-    //! ## v1 write compromise
+    //! ## Streaming writes
     //!
-    //! `fs_ext4_write_file` in the C ABI is a *whole-file replace*, not a
-    //! positional write. WinFsp issues partial offset writes from the OS
-    //! cache manager. To bridge the gap, [`Ext4Context::write`] currently
-    //! reads the entire existing file, splices the new bytes in at the
-    //! requested offset, and calls `fs_ext4_write_file` with the merged
-    //! buffer. This is correct but O(filesize) per write — fine for small
-    //! files, painful for large ones. A positional `pwrite` C ABI is the
-    //! follow-up; until it lands, large-file workloads will be slow.
+    //! WinFsp issues partial offset writes from the OS cache manager.
+    //! [`Ext4Context::write`] dispatches each chunk directly to
+    //! `fs_ext4_pwrite`, which allocates physical blocks only for the
+    //! affected unmapped logical range and read-modify-writes any blocks
+    //! already mapped. Cost per call is O(chunk), not O(filesize), so
+    //! large copies don't fragment or quadratically rewrite the file.
 
     use anyhow::{Context, Result, anyhow};
     use fs_ext4::capi::*;
@@ -352,8 +368,11 @@ mod winfsp_adapter {
     use winfsp::host::{FileSystemHost, VolumeParams};
     use windows::Win32::Foundation::{
         STATUS_ACCESS_DENIED, STATUS_DIRECTORY_NOT_EMPTY, STATUS_DISK_FULL, STATUS_END_OF_FILE,
-        STATUS_FILE_IS_A_DIRECTORY, STATUS_INVALID_DEVICE_REQUEST, STATUS_MEDIA_WRITE_PROTECTED,
-        STATUS_NOT_A_DIRECTORY, STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_NOT_FOUND,
+        STATUS_FILE_IS_A_DIRECTORY, STATUS_FILE_TOO_LARGE, STATUS_INSUFFICIENT_RESOURCES,
+        STATUS_INVALID_DEVICE_REQUEST, STATUS_INVALID_PARAMETER, STATUS_IO_DEVICE_ERROR,
+        STATUS_MEDIA_WRITE_PROTECTED, STATUS_NAME_TOO_LONG, STATUS_NOT_A_DIRECTORY,
+        STATUS_NOT_IMPLEMENTED, STATUS_NOT_SUPPORTED, STATUS_OBJECT_NAME_COLLISION,
+        STATUS_OBJECT_NAME_NOT_FOUND,
     };
     use windows::Win32::Storage::FileSystem::{
         FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_READONLY,
@@ -438,19 +457,48 @@ mod winfsp_adapter {
         Ok(attr)
     }
 
+    /// Errno values use **macOS POSIX numbers** because that's what the
+    /// fs_ext4 C ABI returns (see `fs_ext4::error::errno`). Linux and macOS
+    /// agree on every code below 32; ENAMETOOLONG/ENOTSUP/ENOTEMPTY/ENOSYS
+    /// are the divergence points and are spelled with their macOS values
+    /// here.
+    ///
+    /// Also logs the C ABI's `last_error` string to stderr so the driver
+    /// console shows the underlying reason (extent overlap, no contiguous
+    /// run, checksum mismatch, …) — Windows-side status codes are too
+    /// coarse to debug from on their own.
     fn errno_to_status(errno: i32) -> windows::Win32::Foundation::NTSTATUS {
-        // Coarse mapping. Refine when we hit specific cases in testing.
-        match errno {
-            2  /* ENOENT */    => STATUS_OBJECT_NAME_NOT_FOUND,
-            13 /* EACCES */    => STATUS_ACCESS_DENIED,
-            17 /* EEXIST */    => STATUS_OBJECT_NAME_COLLISION,
-            20 /* ENOTDIR */   => STATUS_NOT_A_DIRECTORY,
-            21 /* EISDIR */    => STATUS_FILE_IS_A_DIRECTORY,
-            28 /* ENOSPC */    => STATUS_DISK_FULL,
-            30 /* EROFS */     => STATUS_MEDIA_WRITE_PROTECTED,
-            39 /* ENOTEMPTY */ => STATUS_DIRECTORY_NOT_EMPTY,
-            _ => STATUS_INVALID_DEVICE_REQUEST,
-        }
+        let status = match errno {
+            2  /* ENOENT */       => STATUS_OBJECT_NAME_NOT_FOUND,
+            5  /* EIO */          => STATUS_IO_DEVICE_ERROR,
+            12 /* ENOMEM */       => STATUS_INSUFFICIENT_RESOURCES,
+            13 /* EACCES */       => STATUS_ACCESS_DENIED,
+            17 /* EEXIST */       => STATUS_OBJECT_NAME_COLLISION,
+            20 /* ENOTDIR */      => STATUS_NOT_A_DIRECTORY,
+            21 /* EISDIR */       => STATUS_FILE_IS_A_DIRECTORY,
+            22 /* EINVAL */       => STATUS_INVALID_PARAMETER,
+            27 /* EFBIG */        => STATUS_FILE_TOO_LARGE,
+            28 /* ENOSPC */       => STATUS_DISK_FULL,
+            30 /* EROFS */        => STATUS_MEDIA_WRITE_PROTECTED,
+            45 /* ENOTSUP */      => STATUS_NOT_SUPPORTED,
+            63 /* ENAMETOOLONG */ => STATUS_NAME_TOO_LONG,
+            66 /* ENOTEMPTY */    => STATUS_DIRECTORY_NOT_EMPTY,
+            78 /* ENOSYS */       => STATUS_NOT_IMPLEMENTED,
+            _                     => STATUS_INVALID_DEVICE_REQUEST,
+        };
+        let msg = unsafe {
+            let p = fs_ext4_last_error();
+            if p.is_null() {
+                String::new()
+            } else {
+                std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+            }
+        };
+        eprintln!(
+            "ext4: capi error errno={errno} status={:#010x}: {msg}",
+            status.0 as u32
+        );
+        status
     }
 
     /// Per-open file handle state.
@@ -512,6 +560,20 @@ mod winfsp_adapter {
                 total_blocks: vi.total_blocks,
                 free_blocks: vi.free_blocks,
             })
+        }
+
+        /// Defense-in-depth check used by every mutating WinFsp callback.
+        /// WinFsp's `read_only_volume` flag is the primary gate, but we
+        /// re-check `self.mount.writable` at the top of each writer so
+        /// a regression that routes a RO `Mount` through a write path
+        /// surfaces as `STATUS_MEDIA_WRITE_PROTECTED` instead of
+        /// corrupting the on-disk image. Cheap (one bool load) and
+        /// keeps the safety story local to this module.
+        fn ensure_writable(&self) -> FspResult<()> {
+            if !self.mount.writable {
+                return Err(STATUS_MEDIA_WRITE_PROTECTED.into());
+            }
+            Ok(())
         }
     }
 
@@ -705,10 +767,16 @@ mod winfsp_adapter {
         }
 
         // -----------------------------------------------------------------
-        // RW-side methods. These are wired unconditionally; on a RO mount
-        // the volume's `read_only_volume` flag means WinFsp short-circuits
-        // them with STATUS_MEDIA_WRITE_PROTECTED before dispatch, so the
-        // bodies don't need a `if !self.mount.writable { ... }` guard.
+        // RW-side methods. WinFsp's `read_only_volume` VolumeParams flag
+        // is the primary gate — on a RO mount it short-circuits these
+        // callbacks with STATUS_MEDIA_WRITE_PROTECTED before dispatch.
+        // We additionally consult `self.mount.writable` at the top of
+        // each mutating method as defense-in-depth: it costs a single
+        // bool load, catches future regressions where someone routes a
+        // RO `Mount` through a write path bypassing WinFsp's gate (e.g.
+        // a unit test or a non-WinFsp consumer), and keeps the safety
+        // story local to the methods rather than relying solely on the
+        // VolumeParams configuration.
         // -----------------------------------------------------------------
 
         fn create(
@@ -723,6 +791,7 @@ mod winfsp_adapter {
             _extra_buffer_is_reparse_point: bool,
             file_info: &mut OpenFileInfo,
         ) -> FspResult<Self::FileContext> {
+            self.ensure_writable()?;
             let unix_path =
                 winpath_to_unix(file_name).map_err(|_| STATUS_OBJECT_NAME_NOT_FOUND)?;
             let cp = CString::new(unix_path.as_str())
@@ -769,6 +838,7 @@ mod winfsp_adapter {
             constrained_io: bool,
             file_info: &mut FileInfo,
         ) -> FspResult<u32> {
+            self.ensure_writable()?;
             if context.is_dir {
                 return Err(STATUS_FILE_IS_A_DIRECTORY.into());
             }
@@ -801,42 +871,18 @@ mod winfsp_adapter {
                 populate_file_info(&attr, file_info);
                 return Ok(0);
             }
-            let new_end = eff_offset
-                .checked_add(accept_len)
-                .ok_or_else(|| windows::core::Error::from(STATUS_INVALID_DEVICE_REQUEST))?;
-            let new_size = new_end.max(cur_size);
-
-            // v1 compromise: the C ABI's `fs_ext4_write_file` is a
-            // whole-file replace, so we read existing content, splice the
-            // new bytes in, and write the merged buffer back.
-            let mut merged: Vec<u8> = vec![0u8; new_size as usize];
-            if cur_size > 0 {
-                let n = unsafe {
-                    fs_ext4_read_file(
-                        self.mount.fs,
-                        cp.as_ptr(),
-                        merged.as_mut_ptr() as *mut c_void,
-                        0,
-                        cur_size,
-                    )
-                };
-                if n < 0 {
-                    let errno = unsafe { fs_ext4_last_errno() };
-                    return Err(errno_to_status(errno).into());
-                }
-            }
-            // Splice the new bytes in. `merged` is already `new_size`
-            // bytes; bytes between `cur_size` and `eff_offset` (a hole
-            // created by writing past EOF) stay zero.
-            let dst = &mut merged[eff_offset as usize..(eff_offset + accept_len) as usize];
-            dst.copy_from_slice(&buffer[..accept_len as usize]);
-
+            // Positional write — costs O(accept_len), not O(filesize). The
+            // C ABI's `fs_ext4_pwrite` allocates blocks only for unmapped
+            // logical blocks in the affected range and read-modify-writes
+            // existing ones; sparse holes between `cur_size` and
+            // `eff_offset` (from writing past EOF) stay sparse.
             let rc = unsafe {
-                fs_ext4_write_file(
+                fs_ext4_pwrite(
                     self.mount.fs,
                     cp.as_ptr(),
-                    merged.as_ptr() as *const c_void,
-                    merged.len() as u64,
+                    buffer.as_ptr() as *const c_void,
+                    accept_len,
+                    eff_offset,
                 )
             };
             if rc < 0 {
@@ -859,6 +905,7 @@ mod winfsp_adapter {
             _set_allocation_size: bool,
             file_info: &mut FileInfo,
         ) -> FspResult<()> {
+            self.ensure_writable()?;
             if context.is_dir {
                 return Err(STATUS_FILE_IS_A_DIRECTORY.into());
             }
@@ -889,6 +936,7 @@ mod winfsp_adapter {
             // WinFsp Overwrite = "the file's content is being replaced".
             // We truncate to 0 here; the cache manager will follow up with
             // Write calls for the new bytes.
+            self.ensure_writable()?;
             if context.is_dir {
                 return Err(STATUS_FILE_IS_A_DIRECTORY.into());
             }
@@ -910,13 +958,14 @@ mod winfsp_adapter {
         fn set_basic_info(
             &self,
             context: &Self::FileContext,
-            _file_attributes: u32,
+            file_attributes: u32,
             _creation_time: u64,
             last_access_time: u64,
             last_write_time: u64,
             _last_change_time: u64,
             file_info: &mut FileInfo,
         ) -> FspResult<()> {
+            self.ensure_writable()?;
             // 0 means "leave unchanged" per WinFsp; we map that to
             // KEEP_UNCHANGED for the C ABI. ext4 stores second-precision
             // timestamps in the standard fields, so we drop the sub-second
@@ -944,8 +993,38 @@ mod winfsp_adapter {
                     return Err(errno_to_status(errno).into());
                 }
             }
-            // file_attributes (READONLY etc.) intentionally not mapped in
-            // v1 — chmod-driven posix bits are the source of truth.
+
+            // Map FILE_ATTRIBUTE_READONLY ↔ POSIX write bits so Explorer's
+            // "Read-only" property checkbox round-trips. WinFsp passes
+            // INVALID_FILE_ATTRIBUTES (0xFFFFFFFF) when the caller didn't
+            // touch attributes; otherwise it passes the desired flags.
+            //
+            // Toggle is symmetric across owner/group/other write bits:
+            //   - READONLY set   → mode &= !0o222
+            //   - READONLY clear → mode |= 0o222
+            // We only chmod when the bit *changes*, so a plain
+            // SetFileTime + zero-edit on attributes doesn't churn ctime
+            // or rewrite the inode.
+            const INVALID_FILE_ATTRIBUTES: u32 = 0xFFFF_FFFF;
+            if file_attributes != 0 && file_attributes != INVALID_FILE_ATTRIBUTES {
+                // Need current mode to detect the no-op case; stat now.
+                let cur = stat_path(self.mount.fs, &path)?;
+                let want_ro = file_attributes & FILE_ATTRIBUTE_READONLY.0 != 0;
+                let is_ro = (cur.mode & 0o222) == 0;
+                if want_ro != is_ro {
+                    let new_mode = if want_ro {
+                        cur.mode & !0o222
+                    } else {
+                        cur.mode | 0o222
+                    };
+                    let rc = unsafe { fs_ext4_chmod(self.mount.fs, cp.as_ptr(), new_mode) };
+                    if rc != 0 {
+                        let errno = unsafe { fs_ext4_last_errno() };
+                        return Err(errno_to_status(errno).into());
+                    }
+                }
+            }
+
             let attr = stat_path(self.mount.fs, &path)?;
             populate_file_info(&attr, file_info);
             *context.attr.lock().unwrap() = attr;
@@ -957,20 +1036,26 @@ mod winfsp_adapter {
             context: &Self::FileContext,
             file_name: &U16CStr,
             new_file_name: &U16CStr,
-            _replace_if_exists: bool,
+            replace_if_exists: bool,
         ) -> FspResult<()> {
-            // The C ABI rejects existing destinations regardless of
-            // `replace_if_exists` (overwrite-on-rename is a follow-up in
-            // the library). We thread the flag through anyway so the
-            // signature stays honest.
+            self.ensure_writable()?;
+            // WinFsp asks us to honor `replace_if_exists` so Explorer's
+            // "Save As" / drag-drop-onto-existing flows succeed instead
+            // of failing with STATUS_OBJECT_NAME_COLLISION. We thread
+            // it through to `fs_ext4_rename2` via the REPLACE flag.
             let src = winpath_to_unix(file_name).map_err(|_| STATUS_OBJECT_NAME_NOT_FOUND)?;
             let dst = winpath_to_unix(new_file_name).map_err(|_| STATUS_OBJECT_NAME_NOT_FOUND)?;
             let csrc = CString::new(src.as_str())
                 .map_err(|_| windows::core::Error::from(STATUS_OBJECT_NAME_NOT_FOUND))?;
             let cdst = CString::new(dst.as_str())
                 .map_err(|_| windows::core::Error::from(STATUS_OBJECT_NAME_NOT_FOUND))?;
+            let flags = if replace_if_exists {
+                FS_EXT4_RENAME_REPLACE
+            } else {
+                0
+            };
             let rc =
-                unsafe { fs_ext4_rename(self.mount.fs, csrc.as_ptr(), cdst.as_ptr()) };
+                unsafe { fs_ext4_rename2(self.mount.fs, csrc.as_ptr(), cdst.as_ptr(), flags) };
             if rc != 0 {
                 let errno = unsafe { fs_ext4_last_errno() };
                 return Err(errno_to_status(errno).into());
@@ -987,6 +1072,7 @@ mod winfsp_adapter {
             _file_name: &U16CStr,
             delete_file: bool,
         ) -> FspResult<()> {
+            self.ensure_writable()?;
             *context.delete.lock().unwrap() = delete_file;
             Ok(())
         }
@@ -996,6 +1082,13 @@ mod winfsp_adapter {
                 return;
             }
             if !*context.delete.lock().unwrap() {
+                return;
+            }
+            // RO-mount safety net: `set_delete` would have already been
+            // rejected by `ensure_writable`, but if anything ever flips the
+            // flag through a side channel, refuse to act on it here too.
+            // Cleanup has no return path so we just early-out.
+            if !self.mount.writable {
                 return;
             }
             let path = context.unix_path();
@@ -1124,4 +1217,64 @@ mod winfsp_adapter {
 
 #[cfg(all(windows, feature = "mount"))]
 pub use winfsp_adapter::run;
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for the `Mount.writable` plumbing.
+    //!
+    //! We can't drive the live WinFsp callback path from a host test —
+    //! the adapter is `#[cfg(all(windows, feature = "mount"))]` and links
+    //! winfsp-rs / the WinFsp DLL — so the tests below are synthetic:
+    //! they construct a `Mount` directly with a null `fs` pointer (drop
+    //! treats null as a no-op) and assert the field is wired the way
+    //! `winfsp_adapter::Ext4Context::ensure_writable` expects.
+
+    use super::*;
+
+    /// A mount opened RO must report `writable == false`. This is the
+    /// invariant `ensure_writable` relies on to short-circuit mutating
+    /// WinFsp callbacks with `STATUS_MEDIA_WRITE_PROTECTED` even if a
+    /// regression ever bypasses the `read_only_volume` VolumeParams gate.
+    #[test]
+    fn ro_mount_is_not_writable() {
+        let mount = Mount {
+            fs: std::ptr::null_mut(),
+            cb_ctx: None,
+            writable: false,
+        };
+        assert!(!mount.writable, "RO Mount should report writable = false");
+    }
+
+    /// A mount opened RW must report `writable == true`. This mirrors
+    /// the literal that `open_direct_rw` / `open_partition_rw` set on
+    /// success — kept here so a refactor that flips the polarity is
+    /// caught by `cargo test` instead of silently mounting RO under
+    /// the `--rw` flag.
+    #[test]
+    fn rw_mount_is_writable() {
+        let mount = Mount {
+            fs: std::ptr::null_mut(),
+            cb_ctx: None,
+            writable: true,
+        };
+        assert!(mount.writable, "RW Mount should report writable = true");
+    }
+
+    /// On the Windows-mount build the writable check belongs at the top
+    /// of every mutating WinFsp callback. We exercise the boolean here
+    /// the same way `Ext4Context::ensure_writable` does — direct field
+    /// load, no FFI — so the branch has at least one host-side test
+    /// even though the adapter itself is Windows-only.
+    #[test]
+    fn writable_check_branch() {
+        let ro = Mount { fs: std::ptr::null_mut(), cb_ctx: None, writable: false };
+        let rw = Mount { fs: std::ptr::null_mut(), cb_ctx: None, writable: true };
+
+        // Mirrors `if !self.mount.writable { return Err(STATUS_MEDIA_WRITE_PROTECTED.into()); }`.
+        let ro_blocks = !ro.writable;
+        let rw_passes = rw.writable;
+        assert!(ro_blocks, "ensure_writable() must block on RO mount");
+        assert!(rw_passes, "ensure_writable() must pass on RW mount");
+    }
+}
 

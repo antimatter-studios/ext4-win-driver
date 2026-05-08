@@ -1,19 +1,10 @@
-//! ext4-specific superblock detection + path probe.
+//! ext4-specific superblock detection.
 //!
-//! Generic helpers (drive-letter selection, GUID_DEVINTERFACE_DISK,
-//! device-interface name parsing, raw-block reading) live in
-//! [`winfsp_fs_skeleton`]. Only the ext4-coupled bits stay here.
-
-use anyhow::{Context, Result};
-use std::path::Path;
-
-use winfsp_fs_skeleton::device::{BlockSource, FileSource};
-
-/// Minimum bytes we need to read from a block source to inspect the
-/// ext4 superblock magic. Superblock starts at byte 1024; `s_magic`
-/// lives at offset 0x38 within it. Reading 1100 gives us enough slack
-/// to keep the same buffer if we ever check more fields.
-const SB_PROBE_LEN: usize = 1100;
+//! Generic device probing (drive-letter selection, GUID_DEVINTERFACE_DISK,
+//! device-interface name parsing, raw-block reading at any offset) lives
+//! in [`winfsp_fs_skeleton`]'s `probe_at_offset`. This module exists only
+//! to provide the byte-slice predicate that the skeleton calls back into
+//! via the [`crate::Ext4Backend`] `FsBackend::detect` impl.
 
 /// Byte offset of the ext4 superblock magic (`s_magic`) from the start
 /// of the device. 1024 (superblock start) + 0x38 (s_magic offset).
@@ -33,30 +24,18 @@ pub fn is_ext4(bytes: &[u8]) -> bool {
     bytes[EXT4_MAGIC_OFFSET..EXT4_MAGIC_OFFSET + 2] == EXT4_MAGIC
 }
 
-/// Open `path` (a Windows volume device like `\\.\X:` or a regular
-/// file), read enough bytes to inspect the ext4 superblock, and
-/// return whether [`is_ext4`] matches.
-///
-/// Returns `Ok(false)` for short / unreadable devices rather than an
-/// error -- callers that probe whole-disk paths shouldn't spam logs
-/// for non-block volumes (CD-ROM, empty card reader slots, etc.).
-pub fn probe_path(path: &Path) -> Result<bool> {
-    let src = FileSource::open(path)
-        .with_context(|| format!("opening {} for probe", path.display()))?;
-    let mut buf = vec![0u8; SB_PROBE_LEN];
-    if src.read_at(0, &mut buf).is_err() {
-        return Ok(false);
-    }
-    Ok(is_ext4(&buf))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Buffer length the tests use to construct a synthetic superblock.
+    /// Must be at least `EXT4_MAGIC_OFFSET + 2`; 1100 leaves headroom
+    /// in case future tests want to set additional superblock fields.
+    const TEST_BUF_LEN: usize = 1100;
+
     #[test]
     fn is_ext4_matches_magic_at_offset() {
-        let mut buf = vec![0u8; SB_PROBE_LEN];
+        let mut buf = vec![0u8; TEST_BUF_LEN];
         buf[EXT4_MAGIC_OFFSET] = 0x53;
         buf[EXT4_MAGIC_OFFSET + 1] = 0xEF;
         assert!(is_ext4(&buf));
@@ -64,7 +43,7 @@ mod tests {
 
     #[test]
     fn is_ext4_rejects_wrong_magic() {
-        let mut buf = vec![0u8; SB_PROBE_LEN];
+        let mut buf = vec![0u8; TEST_BUF_LEN];
         buf[EXT4_MAGIC_OFFSET] = 0x42;
         buf[EXT4_MAGIC_OFFSET + 1] = 0x42;
         assert!(!is_ext4(&buf));
