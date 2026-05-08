@@ -1,0 +1,3 @@
+[submodule "harness"]
+	path = harness
+	url = https://github.com/antimatter-studios/fs-test-harness.git

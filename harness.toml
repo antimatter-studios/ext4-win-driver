@@ -1,8 +1,8 @@
 # harness.toml — fs-test-harness consumer config for ext4-win-driver.
 #
-# The harness scripts + Rust runner live at ../fs-test-harness. Once
-# fs-test-harness is published, switch to a `harness/` git submodule and
-# update the paths in CONTRIBUTING / docs accordingly.
+# The harness scripts + Rust runner live at ./harness/, vendored as a
+# git submodule from https://github.com/antimatter-studios/fs-test-harness.
+# Run `git submodule update --init --recursive` after cloning.
 
 [project]
 name        = "ext4-win-driver"
