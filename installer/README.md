@@ -1,6 +1,14 @@
 # ext4-win-driver installer
 
-WiX 4 source for the ext4-win-driver Windows installer. Two artefacts:
+WiX 7 source for the ext4-win-driver Windows installer. Two artefacts:
+
+> **Upstream:** these wxs files are an ext4-customised copy of the
+> templates shipped in
+> [winfsp-fs-skeleton/templates/installer/](https://github.com/antimatter-studios/winfsp-fs-skeleton/tree/main/templates/installer).
+> Future filesystem drivers (qcow2 / ntfs / ...) start from the same
+> templates with their own product name + GUIDs substituted in. If
+> you fix a structural bug here, propagate it back to the skeleton's
+> templates so other consumers benefit.
 
 | File                                          | Audience                | What it does                                              |
 |-----------------------------------------------|-------------------------|-----------------------------------------------------------|

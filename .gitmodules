@@ -11,3 +11,6 @@
 [submodule "vendor/rust-fs-core"]
 	path = vendor/rust-fs-core
 	url = https://github.com/antimatter-studios/rust-fs-core.git
+[submodule "vendor/winfsp-fs-skeleton"]
+	path = vendor/winfsp-fs-skeleton
+	url = https://github.com/antimatter-studios/winfsp-fs-skeleton

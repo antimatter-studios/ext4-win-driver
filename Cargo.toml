@@ -17,9 +17,18 @@ path = "src/main.rs"
 fs-ext4 = { path = "vendor/rust-fs-ext4" }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
+# winfsp-fs-skeleton owns the SCM dispatcher, disk-arrival event pump,
+# partition walker, raw-device I/O with sector alignment, and drive-
+# letter selection. We supply only the ext4-specific superblock-magic
+# detect via the FsBackend trait. The skeleton has cross-platform stubs
+# for non-windows hosts so it stays in [dependencies], not the
+# windows-only block.
+winfsp-fs-skeleton = { path = "vendor/winfsp-fs-skeleton", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
+# Aligned with winfsp-fs-skeleton's pin so cargo resolves a single
+# windows-sys instance rather than compiling 0.59 + 0.61 side by side.
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_Storage_FileSystem",
@@ -51,10 +60,6 @@ windows = { version = "0.61", features = [
 ], optional = true }
 winfsp-sys = { path = "vendor/winfsp-rs/winfsp-sys", optional = true }
 widestring = { version = "1", optional = true }
-# `service` subcommand: SCM dispatcher + control-handler glue. Optional
-# + Windows-target-only (the crate's only platform). Pulled in by the
-# `service` feature; on macOS the cfg-gated module compiles to a stub.
-windows-service = { version = "0.7", optional = true }
 
 [target.'cfg(windows)'.build-dependencies]
 # Only used when the `mount` feature is on; build.rs guards the call.
@@ -68,11 +73,12 @@ default = []
 # absent.
 mount = ["dep:winfsp", "dep:winfsp-sys", "dep:windows", "dep:widestring"]
 # Enables the `service` subcommand (Windows Service variant of the
-# auto-mount watcher). Pulls in `windows-service` for the SCM
-# dispatcher. Independent of `mount` — the service shells out to
+# auto-mount watcher). Forwards to winfsp-fs-skeleton's `service`
+# feature, which pulls in `windows-service` for the SCM dispatcher.
+# Independent of `mount` -- the service shells out to
 # `launchctl-<arch>.exe` rather than linking WinFsp itself. On
 # non-Windows the subcommand handler is a stub.
-service = ["dep:windows-service"]
+service = ["winfsp-fs-skeleton/service"]
 
 [profile.release]
 lto = true

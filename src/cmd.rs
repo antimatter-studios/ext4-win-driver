@@ -13,7 +13,7 @@ use std::sync::Mutex;
 
 use crate::MountArgs;
 use crate::mount::Mount;
-use crate::partition;
+use winfsp_fs_skeleton::partition;
 
 // ---------------------------------------------------------------------------
 // Helpers

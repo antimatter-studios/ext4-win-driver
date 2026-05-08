@@ -19,8 +19,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::MountArgs;
-use crate::device::{BlockSource, FileSource};
-use crate::partition;
+use winfsp_fs_skeleton::device::{BlockSource, FileSource};
+use winfsp_fs_skeleton::partition;
 
 /// RAII handle around `*mut fs_ext4_fs_t`.
 ///
