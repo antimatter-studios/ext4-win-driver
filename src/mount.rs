@@ -346,16 +346,14 @@ mod winfsp_adapter {
     //! FILETIME is 100-ns intervals since 1601-01-01. The constant offset
     //! is 11644473600 seconds.
     //!
-    //! ## v1 write compromise
+    //! ## Streaming writes
     //!
-    //! `fs_ext4_write_file` in the C ABI is a *whole-file replace*, not a
-    //! positional write. WinFsp issues partial offset writes from the OS
-    //! cache manager. To bridge the gap, [`Ext4Context::write`] currently
-    //! reads the entire existing file, splices the new bytes in at the
-    //! requested offset, and calls `fs_ext4_write_file` with the merged
-    //! buffer. This is correct but O(filesize) per write — fine for small
-    //! files, painful for large ones. A positional `pwrite` C ABI is the
-    //! follow-up; until it lands, large-file workloads will be slow.
+    //! WinFsp issues partial offset writes from the OS cache manager.
+    //! [`Ext4Context::write`] dispatches each chunk directly to
+    //! `fs_ext4_pwrite`, which allocates physical blocks only for the
+    //! affected unmapped logical range and read-modify-writes any blocks
+    //! already mapped. Cost per call is O(chunk), not O(filesize), so
+    //! large copies don't fragment or quadratically rewrite the file.
 
     use anyhow::{Context, Result, anyhow};
     use fs_ext4::capi::*;
@@ -370,8 +368,11 @@ mod winfsp_adapter {
     use winfsp::host::{FileSystemHost, VolumeParams};
     use windows::Win32::Foundation::{
         STATUS_ACCESS_DENIED, STATUS_DIRECTORY_NOT_EMPTY, STATUS_DISK_FULL, STATUS_END_OF_FILE,
-        STATUS_FILE_IS_A_DIRECTORY, STATUS_INVALID_DEVICE_REQUEST, STATUS_MEDIA_WRITE_PROTECTED,
-        STATUS_NOT_A_DIRECTORY, STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_NOT_FOUND,
+        STATUS_FILE_IS_A_DIRECTORY, STATUS_FILE_TOO_LARGE, STATUS_INSUFFICIENT_RESOURCES,
+        STATUS_INVALID_DEVICE_REQUEST, STATUS_INVALID_PARAMETER, STATUS_IO_DEVICE_ERROR,
+        STATUS_MEDIA_WRITE_PROTECTED, STATUS_NAME_TOO_LONG, STATUS_NOT_A_DIRECTORY,
+        STATUS_NOT_IMPLEMENTED, STATUS_NOT_SUPPORTED, STATUS_OBJECT_NAME_COLLISION,
+        STATUS_OBJECT_NAME_NOT_FOUND,
     };
     use windows::Win32::Storage::FileSystem::{
         FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_READONLY,
@@ -456,19 +457,48 @@ mod winfsp_adapter {
         Ok(attr)
     }
 
+    /// Errno values use **macOS POSIX numbers** because that's what the
+    /// fs_ext4 C ABI returns (see `fs_ext4::error::errno`). Linux and macOS
+    /// agree on every code below 32; ENAMETOOLONG/ENOTSUP/ENOTEMPTY/ENOSYS
+    /// are the divergence points and are spelled with their macOS values
+    /// here.
+    ///
+    /// Also logs the C ABI's `last_error` string to stderr so the driver
+    /// console shows the underlying reason (extent overlap, no contiguous
+    /// run, checksum mismatch, …) — Windows-side status codes are too
+    /// coarse to debug from on their own.
     fn errno_to_status(errno: i32) -> windows::Win32::Foundation::NTSTATUS {
-        // Coarse mapping. Refine when we hit specific cases in testing.
-        match errno {
-            2  /* ENOENT */    => STATUS_OBJECT_NAME_NOT_FOUND,
-            13 /* EACCES */    => STATUS_ACCESS_DENIED,
-            17 /* EEXIST */    => STATUS_OBJECT_NAME_COLLISION,
-            20 /* ENOTDIR */   => STATUS_NOT_A_DIRECTORY,
-            21 /* EISDIR */    => STATUS_FILE_IS_A_DIRECTORY,
-            28 /* ENOSPC */    => STATUS_DISK_FULL,
-            30 /* EROFS */     => STATUS_MEDIA_WRITE_PROTECTED,
-            39 /* ENOTEMPTY */ => STATUS_DIRECTORY_NOT_EMPTY,
-            _ => STATUS_INVALID_DEVICE_REQUEST,
-        }
+        let status = match errno {
+            2  /* ENOENT */       => STATUS_OBJECT_NAME_NOT_FOUND,
+            5  /* EIO */          => STATUS_IO_DEVICE_ERROR,
+            12 /* ENOMEM */       => STATUS_INSUFFICIENT_RESOURCES,
+            13 /* EACCES */       => STATUS_ACCESS_DENIED,
+            17 /* EEXIST */       => STATUS_OBJECT_NAME_COLLISION,
+            20 /* ENOTDIR */      => STATUS_NOT_A_DIRECTORY,
+            21 /* EISDIR */       => STATUS_FILE_IS_A_DIRECTORY,
+            22 /* EINVAL */       => STATUS_INVALID_PARAMETER,
+            27 /* EFBIG */        => STATUS_FILE_TOO_LARGE,
+            28 /* ENOSPC */       => STATUS_DISK_FULL,
+            30 /* EROFS */        => STATUS_MEDIA_WRITE_PROTECTED,
+            45 /* ENOTSUP */      => STATUS_NOT_SUPPORTED,
+            63 /* ENAMETOOLONG */ => STATUS_NAME_TOO_LONG,
+            66 /* ENOTEMPTY */    => STATUS_DIRECTORY_NOT_EMPTY,
+            78 /* ENOSYS */       => STATUS_NOT_IMPLEMENTED,
+            _                     => STATUS_INVALID_DEVICE_REQUEST,
+        };
+        let msg = unsafe {
+            let p = fs_ext4_last_error();
+            if p.is_null() {
+                String::new()
+            } else {
+                std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+            }
+        };
+        eprintln!(
+            "ext4: capi error errno={errno} status={:#010x}: {msg}",
+            status.0 as u32
+        );
+        status
     }
 
     /// Per-open file handle state.
@@ -841,42 +871,18 @@ mod winfsp_adapter {
                 populate_file_info(&attr, file_info);
                 return Ok(0);
             }
-            let new_end = eff_offset
-                .checked_add(accept_len)
-                .ok_or_else(|| windows::core::Error::from(STATUS_INVALID_DEVICE_REQUEST))?;
-            let new_size = new_end.max(cur_size);
-
-            // v1 compromise: the C ABI's `fs_ext4_write_file` is a
-            // whole-file replace, so we read existing content, splice the
-            // new bytes in, and write the merged buffer back.
-            let mut merged: Vec<u8> = vec![0u8; new_size as usize];
-            if cur_size > 0 {
-                let n = unsafe {
-                    fs_ext4_read_file(
-                        self.mount.fs,
-                        cp.as_ptr(),
-                        merged.as_mut_ptr() as *mut c_void,
-                        0,
-                        cur_size,
-                    )
-                };
-                if n < 0 {
-                    let errno = unsafe { fs_ext4_last_errno() };
-                    return Err(errno_to_status(errno).into());
-                }
-            }
-            // Splice the new bytes in. `merged` is already `new_size`
-            // bytes; bytes between `cur_size` and `eff_offset` (a hole
-            // created by writing past EOF) stay zero.
-            let dst = &mut merged[eff_offset as usize..(eff_offset + accept_len) as usize];
-            dst.copy_from_slice(&buffer[..accept_len as usize]);
-
+            // Positional write — costs O(accept_len), not O(filesize). The
+            // C ABI's `fs_ext4_pwrite` allocates blocks only for unmapped
+            // logical blocks in the affected range and read-modify-writes
+            // existing ones; sparse holes between `cur_size` and
+            // `eff_offset` (from writing past EOF) stay sparse.
             let rc = unsafe {
-                fs_ext4_write_file(
+                fs_ext4_pwrite(
                     self.mount.fs,
                     cp.as_ptr(),
-                    merged.as_ptr() as *const c_void,
-                    merged.len() as u64,
+                    buffer.as_ptr() as *const c_void,
+                    accept_len,
+                    eff_offset,
                 )
             };
             if rc < 0 {
@@ -1030,21 +1036,26 @@ mod winfsp_adapter {
             context: &Self::FileContext,
             file_name: &U16CStr,
             new_file_name: &U16CStr,
-            _replace_if_exists: bool,
+            replace_if_exists: bool,
         ) -> FspResult<()> {
             self.ensure_writable()?;
-            // The C ABI rejects existing destinations regardless of
-            // `replace_if_exists` (overwrite-on-rename is a follow-up in
-            // the library). We thread the flag through anyway so the
-            // signature stays honest.
+            // WinFsp asks us to honor `replace_if_exists` so Explorer's
+            // "Save As" / drag-drop-onto-existing flows succeed instead
+            // of failing with STATUS_OBJECT_NAME_COLLISION. We thread
+            // it through to `fs_ext4_rename2` via the REPLACE flag.
             let src = winpath_to_unix(file_name).map_err(|_| STATUS_OBJECT_NAME_NOT_FOUND)?;
             let dst = winpath_to_unix(new_file_name).map_err(|_| STATUS_OBJECT_NAME_NOT_FOUND)?;
             let csrc = CString::new(src.as_str())
                 .map_err(|_| windows::core::Error::from(STATUS_OBJECT_NAME_NOT_FOUND))?;
             let cdst = CString::new(dst.as_str())
                 .map_err(|_| windows::core::Error::from(STATUS_OBJECT_NAME_NOT_FOUND))?;
+            let flags = if replace_if_exists {
+                FS_EXT4_RENAME_REPLACE
+            } else {
+                0
+            };
             let rc =
-                unsafe { fs_ext4_rename(self.mount.fs, csrc.as_ptr(), cdst.as_ptr()) };
+                unsafe { fs_ext4_rename2(self.mount.fs, csrc.as_ptr(), cdst.as_ptr(), flags) };
             if rc != 0 {
                 let errno = unsafe { fs_ext4_last_errno() };
                 return Err(errno_to_status(errno).into());
