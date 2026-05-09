@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
 PackageIdentifier: AntimatterStudios.ext4-win-driver
 PackageVersion: 0.2.0
 InstallerType: burn
@@ -25,4 +25,4 @@ Installers:
     InstallerUrl: https://github.com/antimatter-studios/ext4-win-driver/releases/download/v0.2.0/ext4-win-driver-0.2.0-x64-Setup.exe
     InstallerSha256: 1B18E71554706296C6EB5938CE812DC0DA11D0020ACF0EB404A22FE90C6B5BD6
 ManifestType: installer
-ManifestVersion: 1.10.0
+ManifestVersion: 1.12.0
