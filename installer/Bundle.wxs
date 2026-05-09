@@ -22,10 +22,10 @@
 
   <Bundle
       Name="ext4-win-driver"
-      Manufacturer="Chris Thomas"
+      Manufacturer="Antimatter Studios"
       Version="$(var.Version)"
       UpgradeCode="b6d4e8a1-3f29-4c7d-9e22-1a8c5d6f7e34"
-      AboutUrl="https://github.com/christhomas/ext4-win-driver"
+      AboutUrl="https://github.com/antimatter-studios/ext4-win-driver"
       HelpUrl="https://winfsp.dev/">
 
     <!--

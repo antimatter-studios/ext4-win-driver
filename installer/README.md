@@ -180,39 +180,6 @@ UTF-8 BOM. The script contains em-dashes in comments, which mojibake
 without the BOM and turn into broken string literals. Save the file as
 UTF-8 with BOM (or use PowerShell 7+, which defaults to UTF-8).
 
-## Known issues
-
-### Bundle stage fails on WiX 7 with `WIX0004 / WIX0044` schema errors
-
-`Bundle.wxs` was authored against the WiX 4 Bundle/Burn schema. WiX 7's
-schema rejects the same source with three errors:
-
-```
-Bundle.wxs(38) : error WIX0004: The RegistrySearch element contains an unexpected attribute 'Format'.
-Bundle.wxs(49) : error WIX0044: The BootstrapperApplication element's Name or SourceFile attribute was not found; one of these is required.
-Bundle.wxs(64) : error WIX0004: The MsiPackage element contains an unexpected attribute 'DetectCondition'.
-```
-
-What changed in WiX 7:
-
-| WiX 4                                                              | WiX 7                                                                |
-|--------------------------------------------------------------------|----------------------------------------------------------------------|
-| `<util:RegistrySearch ... Format="raw" />`                         | `Format` removed; raw is implicit                                    |
-| `<BootstrapperApplication><bal:WixStandardBootstrapperApplication/></BootstrapperApplication>` | `BootstrapperApplication` requires `Name`/`SourceFile`; the `bal:WixStandardBootstrapperApplication` child is now placed under a `<BootstrapperApplicationRef>` |
-| `<MsiPackage ... DetectCondition="..." />`                         | `DetectCondition` moved off `MsiPackage` (now expressed via a top-level `<bal:Condition>` or chain-level packages declared with the new `Bundle/Chain/MsiPackage[Bundle.SearchVariable]` form) |
-
-Until `Bundle.wxs` is migrated to WiX 7, run `build.ps1 -MsiOnly` to
-produce just the MSI:
-
-```powershell
-installer\build.ps1 -ExePath target\release\ext4.exe -Arch arm64 -MsiOnly
-installer\build.ps1 -ExePath target\release\ext4.exe -Arch x64   -MsiOnly
-```
-
-The MSI alone still installs correctly on hosts where WinFsp is already
-present (sshfs-win, rclone, etc. ship it). Bundle migration is tracked
-separately.
-
 ## Notes
 
 - The `UpgradeCode` GUIDs in `Product.wxs` and `Bundle.wxs` are **stable**

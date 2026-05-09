@@ -49,11 +49,11 @@ Shipped in [v0.1.0](https://github.com/antimatter-studios/ext4-win-driver/releas
       advanced-format drives
 - [x] **WinFsp read-only mount** -- verified on Windows 11 ARM64 with
       both VHD smoke tests and a real Raspberry Pi SD card
-- [x] **WinFsp read-write mount** (`--rw`) -- create/write/truncate/
-      rename/unlink/rmdir/mkdir/utimens wired through the C ABI. v1
-      caveat: `write` round-trips the whole file (the underlying ABI is
-      a "save-as" replace), so large-file workloads are slow until a
-      positional `pwrite` lands in `fs-ext4`.
+- [x] **WinFsp read-write mount** (default; `--ro` for read-only) --
+      create/pwrite/truncate/rename/unlink/rmdir/mkdir/utimens wired
+      through the C ABI. Streaming positional writes land in fs-ext4
+      via `pwrite`, so large-file workloads no longer round-trip the
+      whole file.
 - [x] **`ExtFsWatcher` SCM service** -- subscribes to disk-class
       arrivals (`GUID_DEVINTERFACE_DISK`), walks the partition table
       directly, probes each partition for the ext4 superblock magic,
@@ -63,17 +63,23 @@ Shipped in [v0.1.0](https://github.com/antimatter-studios/ext4-win-driver/releas
       `HKCR\SystemFileAssociations\.img`
 - [x] **MSI + Burn bundle** that auto-installs WinFsp if missing
       (chained via the official WinFsp redistributable MSI)
+- [x] **x64 + arm64 Setup.exe** built per release tag by GH Actions
+      (`.github/workflows/release.yml`) and attached to the release.
 
 Not yet shipped:
 
-- [ ] x64 Setup.exe (arm64 only in v0.1.0; same code, just hasn't been
-      cross-built yet)
-- [ ] winget submission
-- [ ] Code-signing certificate
+- [ ] winget submission (manifests staged at [`winget/v0.2.0/`](./winget/v0.2.0))
+
+Out of scope (intentionally):
+
+- Code-signing certificate -- the per-year cost isn't justified for an
+  unsponsored side project. Setup.exe will continue to trip SmartScreen
+  on first download until that changes.
 
 ## Install (end users)
 
-Download `ext4-win-driver-<ver>-arm64-Setup.exe` from
+Download `ext4-win-driver-<ver>-<arch>-Setup.exe` (`arch` is `x64` or
+`arm64`) from
 [Releases](https://github.com/antimatter-studios/ext4-win-driver/releases),
 run it, accept the GPL-3 prompt. The installer:
 
