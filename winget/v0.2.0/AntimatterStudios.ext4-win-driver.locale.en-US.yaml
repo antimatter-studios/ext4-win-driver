@@ -1,14 +1,17 @@
-# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
 PackageIdentifier: AntimatterStudios.ext4-win-driver
-PackageVersion: 0.1.0
+PackageVersion: 0.2.0
 PackageLocale: en-US
 Publisher: Antimatter Studios
 PublisherUrl: https://github.com/antimatter-studios
 PublisherSupportUrl: https://github.com/antimatter-studios/ext4-win-driver/issues
+Author: Chris Thomas
 PackageName: ext4-win-driver
 PackageUrl: https://github.com/antimatter-studios/ext4-win-driver
 License: GPL-3.0-only
 LicenseUrl: https://www.gnu.org/licenses/gpl-3.0.html
+Copyright: Copyright (c) Chris Thomas / Antimatter Studios
+CopyrightUrl: https://github.com/antimatter-studios/ext4-win-driver/blob/main/LICENSE
 ShortDescription: Browse and auto-mount ext4 disks on Windows via WinFsp.
 Description: |
   ext4-win-driver is a Windows-first userspace driver for ext4 volumes.
@@ -22,6 +25,7 @@ Description: |
   Setup.exe chains the WinFsp redistributable so end users only run
   one installer. Read-write is the default mount mode; pass --ro to
   the CLI or -ReadOnly to the right-click verb for safe inspection.
+Moniker: ext4-win-driver
 Tags:
   - ext4
   - filesystem
@@ -30,5 +34,8 @@ Tags:
   - linux
   - sd-card
   - usb
+ReleaseNotes: |
+  See the GitHub release page for the v0.2.0 changelog.
+ReleaseNotesUrl: https://github.com/antimatter-studios/ext4-win-driver/releases/tag/v0.2.0
 ManifestType: defaultLocale
-ManifestVersion: 1.6.0
+ManifestVersion: 1.10.0

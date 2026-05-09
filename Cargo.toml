@@ -1,6 +1,6 @@
 [package]
 name = "ext4-win-driver"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 # GPL-3.0 because the WinFsp Rust bindings (`winfsp` crate) are GPL-3.0.
 # The CLI alone (without the `mount` feature) does not link winfsp and

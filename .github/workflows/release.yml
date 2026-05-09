@@ -177,6 +177,26 @@ jobs:
             dist/ext4-win-driver-*-${{ matrix.arch }}.msi
           if-no-files-found: error
 
+      # Catches the winget License-Blocks-Install / Validation-Unattended-Failed
+      # categories before they become a PR rejection. Runs on every build (tag
+      # push or manual dispatch) so a broken bundle never reaches a release.
+      # Artefacts above are uploaded first so a failing run can still be
+      # downloaded for offline debugging.
+      - name: verify Setup.exe installs silently
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem "dist\ext4-win-driver-*-${{ matrix.arch }}-Setup.exe" | Select-Object -First 1).FullName
+          if (-not $setup) { throw "No Setup.exe found in dist\" }
+          installer\verify-silent.ps1 -SetupPath $setup
+
+      - name: upload verify-silent log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-silent-log-${{ matrix.arch }}
+          path: dist/verify-silent.log
+          if-no-files-found: ignore
+
       - name: attach to GitHub Release (tag push only)
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
