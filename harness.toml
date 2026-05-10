@@ -69,50 +69,52 @@ parts = "{binary} parts {image}"
 info  = "{binary} info  {image}"
 
 # v2 ops (structured tables — host/command/expect_exit). Each is
-# dispatched per-recipe-step; `host = "host"` runs on the Mac, where
-# our pure-CLI ops belong (image lives on host, no SSH needed).
-# Wrapper scripts in ./scripts/ resolve the host-side binary path
-# (no .exe) so the harness doesn't need cross-platform substitution
-# magic. Future ops follow the same shape.
+# dispatched per-recipe-step; `host = "host"` runs on the orchestrator
+# (Mac), where pure-CLI ops belong (image lives on host, no SSH needed).
+#
+# Verifiers are HARNESS-SHIPPED (v3.3.0+): vendor/fs-test-harness/
+# scripts/host/verify-*.sh. Each is filesystem-agnostic, parameterised
+# via `--binary <path>`. The {binary} flat token resolves to
+# `target/release/ext4` on host (cross-platform fallback strips the
+# `.exe` suffix declared in [project].binary for Windows builds).
 
 [ops.verify-ls]
 host = "host"
-command = "bash scripts/verify-ls.sh {image_dir}/{scenario.image} {step.path} {step.expect_args}"
+command = "bash vendor/fs-test-harness/scripts/host/verify-ls.sh --binary {binary} {image_dir}/{scenario.image} {step.path} {step.expect_args}"
 expect_exit = 0
 
 [ops.verify-cat]
 host = "host"
-command = "bash scripts/verify-cat.sh {image_dir}/{scenario.image} {step.path} {step.expect_args}"
+command = "bash vendor/fs-test-harness/scripts/host/verify-cat.sh --binary {binary} {image_dir}/{scenario.image} {step.path} {step.expect_args}"
 expect_exit = 0
 
 [ops.verify-stat]
 host = "host"
-command = "bash scripts/verify-stat.sh {image_dir}/{scenario.image} {step.path} {step.expect_args}"
+command = "bash vendor/fs-test-harness/scripts/host/verify-stat.sh --binary {binary} {image_dir}/{scenario.image} {step.path} {step.expect_args}"
 expect_exit = 0
 
 [ops.verify-tree]
 host = "host"
-command = "bash scripts/verify-tree.sh {image_dir}/{scenario.image} {step.expect_args}"
+command = "bash vendor/fs-test-harness/scripts/host/verify-tree.sh --binary {binary} {image_dir}/{scenario.image} {step.expect_args}"
 expect_exit = 0
 
 [ops.verify-parts]
 host = "host"
-command = "bash scripts/verify-parts.sh {image_dir}/{scenario.image} {step.expect_args}"
+command = "bash vendor/fs-test-harness/scripts/host/verify-parts.sh --binary {binary} {image_dir}/{scenario.image} {step.expect_args}"
 expect_exit = 0
 
 # Negative-path variant for images with no partition table — `parts` is
 # expected to exit non-zero. Separate op-def because the v2 harness
-# (as of 2.0.0) reads expect_exit from [ops.<name>] only; per-step
-# override isn't honored. Once that lands upstream we can collapse
-# this into one op-def.
+# reads expect_exit from [ops.<name>] only; per-step override isn't
+# honored.
 [ops.verify-parts-fails]
 host = "host"
-command = "bash scripts/verify-parts.sh {image_dir}/{scenario.image} {step.expect_args}"
+command = "bash vendor/fs-test-harness/scripts/host/verify-parts.sh --binary {binary} {image_dir}/{scenario.image} {step.expect_args}"
 expect_exit = 1
 
 [ops.verify-info]
 host = "host"
-command = "bash scripts/verify-info.sh {image_dir}/{scenario.image} {step.expect_args}"
+command = "bash vendor/fs-test-harness/scripts/host/verify-info.sh --binary {binary} {image_dir}/{scenario.image} {step.expect_args}"
 expect_exit = 0
 
 # ============================================================
@@ -136,7 +138,7 @@ expect_exit = 0
 # are scenario-specific.
 #
 # Each consumer customises just the BinaryCmd template + ReadyLine in
-# its op-defs; the scripts themselves live in fs-test-harness/scripts/win/
+# its op-defs; the scripts themselves live in fs-test-harness/scripts/vm/
 # and are filesystem-agnostic.
 
 # Shared mount template — every vm-side op-def reuses this BinaryCmd
@@ -145,37 +147,37 @@ expect_exit = 0
 
 [ops.win-write]
 host = "vm"
-command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-write.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}' -Content '{step.content?}'"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/vm/win-write.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}' -Content '{step.content?}'"
 expect_exit = 0
 
 [ops.win-mkdir]
 host = "vm"
-command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-mkdir.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}'"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/vm/win-mkdir.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}'"
 expect_exit = 0
 
 [ops.win-cat-via-mount]
 host = "vm"
-command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-cat-via-mount.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}' -ExpectContent '{step.expect_content?}' -ExpectSize '{step.expect_size?}' -ExpectSha256 '{step.expect_sha256?}'"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/vm/win-cat-via-mount.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}' -ExpectContent '{step.expect_content?}' -ExpectSize '{step.expect_size?}' -ExpectSha256 '{step.expect_sha256?}'"
 expect_exit = 0
 
 [ops.win-ls-via-mount]
 host = "vm"
-command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-ls-via-mount.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}' -ExpectNames '{step.expect_names_csv?}' -ExpectCount '{step.expect_count?}'"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/vm/win-ls-via-mount.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}' -ExpectNames '{step.expect_names_csv?}' -ExpectCount '{step.expect_count?}'"
 expect_exit = 0
 
 [ops.win-rename]
 host = "vm"
-command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-rename.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -From '{step.from}' -To '{step.to}'"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/vm/win-rename.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -From '{step.from}' -To '{step.to}'"
 expect_exit = 0
 
 [ops.win-unlink]
 host = "vm"
-command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-unlink.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}'"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/vm/win-unlink.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}'"
 expect_exit = 0
 
 [ops.win-rmdir]
 host = "vm"
-command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-rmdir.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}'"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/vm/win-rmdir.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}'"
 expect_exit = 0
 
 [mount]
