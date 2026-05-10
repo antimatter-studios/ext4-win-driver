@@ -11,10 +11,20 @@ binary      = "target/release/ext4.exe"
 matrix_path = "test-matrix.json"
 
 [vm]
-host           = "chris@192.168.213.145"
-ssh_key        = "../diskjockey/vendor/rust-fs-ntfs/privatekey"
-workdir        = "C:/Users/chris/dev/ext4-work"
-image_dir      = "vendor/rust-fs-ext4/test-disks"
+# Per-machine values (host / ssh_key / workdir / image_dir) come from
+# the contributor's .test-env (gitignored), not this committed file.
+# run-tests.sh sources .test-env, exports VM_HOST / VM_WORKDIR /
+# SSH_KEY / VM_IMAGE_DIR, and the runner's per-step ssh + scp prefer
+# those env vars over anything declared here. First-run bootstrap
+# prompts for them when .test-env is missing.
+#
+# The fields below are left empty (rather than hard-coded to the
+# maintainer's setup) so that no committed value masquerades as a
+# working default for other contributors.
+host           = ""
+ssh_key        = ""
+workdir        = ""
+image_dir      = ""
 rust_toolchain = "stable-aarch64-pc-windows-gnullvm"
 # winfsp + LLVM-MinGW + LLVM (libclang) are prerequisites; see README's
 # "WinFsp build prerequisites" section. setup-windows-vm.ps1 handles
@@ -29,10 +39,25 @@ env_prefix = "$env:LIBCLANG_PATH = 'C:\\Program Files\\LLVM\\bin';"
 [tools]
 # Optional. fsck.ext4 isn't on the Windows VM today; post-verify hooks
 # referencing {tools.fsck} are stubbed out via [post_verify] until we
-# wire a Mac-side post-pull fsck into test-windows-matrix.sh.
+# wire a Mac-side post-pull fsck into run-tests.sh.
 # fsck = "fsck.ext4 -fn"
 
+[run]
+# Host-side image dir for v2 op-defs. The canonical test images are
+# build artefacts produced by `build-test-disks.sh` in the rust-fs-ext4
+# sibling project — they're not tracked in git, so the vendored
+# vendor/rust-fs-ext4/test-disks/ is empty. Each contributor picks
+# their own location and exports HARNESS_IMAGE_DIR (or sets
+# VM_IMAGE_DIR in .test-env) — that env var wins over this default.
+# Left empty in committed config so no maintainer-specific path
+# ships as a fake default.
+image_dir = ""
+
 [ops]
+# v1 ops (bare command string -> implicit `host = "vm"`). Consumed by
+# the legacy `run-scenario.ps1` driver. Kept until every scenario has
+# migrated to v2 recipes; then we drop these and `run-scenario.ps1`.
+#
 # {extra} carries per-op CLI flags (e.g. `--part 1` for whole-disk
 # images). Empty by default; set per scenario via the op's `extra`
 # field.
@@ -42,6 +67,116 @@ stat = "{binary} stat {image} {path} {extra}"
 tree = "{binary} tree {image} {extra}"
 parts = "{binary} parts {image}"
 info  = "{binary} info  {image}"
+
+# v2 ops (structured tables — host/command/expect_exit). Each is
+# dispatched per-recipe-step; `host = "host"` runs on the Mac, where
+# our pure-CLI ops belong (image lives on host, no SSH needed).
+# Wrapper scripts in ./scripts/ resolve the host-side binary path
+# (no .exe) so the harness doesn't need cross-platform substitution
+# magic. Future ops follow the same shape.
+
+[ops.verify-ls]
+host = "host"
+command = "bash scripts/verify-ls.sh {image_dir}/{scenario.image} {step.path} {step.expect_args}"
+expect_exit = 0
+
+[ops.verify-cat]
+host = "host"
+command = "bash scripts/verify-cat.sh {image_dir}/{scenario.image} {step.path} {step.expect_args}"
+expect_exit = 0
+
+[ops.verify-stat]
+host = "host"
+command = "bash scripts/verify-stat.sh {image_dir}/{scenario.image} {step.path} {step.expect_args}"
+expect_exit = 0
+
+[ops.verify-tree]
+host = "host"
+command = "bash scripts/verify-tree.sh {image_dir}/{scenario.image} {step.expect_args}"
+expect_exit = 0
+
+[ops.verify-parts]
+host = "host"
+command = "bash scripts/verify-parts.sh {image_dir}/{scenario.image} {step.expect_args}"
+expect_exit = 0
+
+# Negative-path variant for images with no partition table — `parts` is
+# expected to exit non-zero. Separate op-def because the v2 harness
+# (as of 2.0.0) reads expect_exit from [ops.<name>] only; per-step
+# override isn't honored. Once that lands upstream we can collapse
+# this into one op-def.
+[ops.verify-parts-fails]
+host = "host"
+command = "bash scripts/verify-parts.sh {image_dir}/{scenario.image} {step.expect_args}"
+expect_exit = 1
+
+[ops.verify-info]
+host = "host"
+command = "bash scripts/verify-info.sh {image_dir}/{scenario.image} {step.expect_args}"
+expect_exit = 0
+
+# ============================================================
+# Win-side (vm) ops — Phase B
+# ============================================================
+#
+# Each vm-side op script is SELF-CONTAINED: it mounts via -BinaryCmd,
+# does the op, unmounts. This is necessary because the v2 dispatcher
+# uses one SSH session per step and user-mode mount processes (WinFsp
+# + an FS driver binary) die when the spawning SSH session ends —
+# cross-step persistent mounts don't survive without serious detach
+# plumbing. Self-contained ops trade per-step mount overhead for
+# reliability + zero cross-step state.
+#
+# Common args every op takes:
+#   -BinaryCmd   "<vm-side path to driver> mount <img> --drive <X>: [<flags>]"
+#   -ReadyLine   regex; "ext4 mounted at" for ext4-win-driver
+#   -Drive       drive letter (single char, no colon)
+#
+# Per-op args (Path, Content, From/To, ExpectContent/Size/Sha256, etc.)
+# are scenario-specific.
+#
+# Each consumer customises just the BinaryCmd template + ReadyLine in
+# its op-defs; the scripts themselves live in fs-test-harness/scripts/win/
+# and are filesystem-agnostic.
+
+# Shared mount template — every vm-side op-def reuses this BinaryCmd
+# shape. ext4-specific bits (binary path, ready-line) are baked in.
+# Recipe steps fill {vm.workdir}/{scenario.image}, {step.drive}, {step.rw_flag?}.
+
+[ops.win-write]
+host = "vm"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-write.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}' -Content '{step.content?}'"
+expect_exit = 0
+
+[ops.win-mkdir]
+host = "vm"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-mkdir.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}'"
+expect_exit = 0
+
+[ops.win-cat-via-mount]
+host = "vm"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-cat-via-mount.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}' -ExpectContent '{step.expect_content?}' -ExpectSize '{step.expect_size?}' -ExpectSha256 '{step.expect_sha256?}'"
+expect_exit = 0
+
+[ops.win-ls-via-mount]
+host = "vm"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-ls-via-mount.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}' -ExpectNames '{step.expect_names_csv?}' -ExpectCount '{step.expect_count?}'"
+expect_exit = 0
+
+[ops.win-rename]
+host = "vm"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-rename.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -From '{step.from}' -To '{step.to}'"
+expect_exit = 0
+
+[ops.win-unlink]
+host = "vm"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-unlink.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}'"
+expect_exit = 0
+
+[ops.win-rmdir]
+host = "vm"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-rmdir.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}'"
+expect_exit = 0
 
 [mount]
 # WinFsp mount, foreground. The runner kills the background process on

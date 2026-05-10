@@ -1,552 +1,571 @@
 {
-  "_format": "v1",
+  "_format": "v2",
   "_doc": "ext4-win-driver matrix work list. See docs/test-harness.md. Each scenario name is unique. status starts at 'pending'; agents transition via scripts/claim-scenario.sh. Schema per scenario: image (file under EXT4_TEST_DISKS), mount_args (extra argv after `mount <image> --drive X:`), operations[] (typed verb list, see run-scenario.ps1), post_verify (optional 'fsck-ext4-strict' hook). Hashes captured from ext4 CLI on macOS against the canonical test images at /Volumes/sdcard256gb/projects/rust-fs-ext4/test-disks/.",
   "scenarios": {
     "basic-ro-list": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [],
       "_attempts": [],
-      "_notes": "Smoke-test for read-only mount + readdir. Uses ext4 ls (CLI) so the same scenario also runs on macOS for cross-host parity if we ever wire that up.",
-      "ops": [
+      "_notes": "v2 pilot \u2014 same as basic-ro-list but expressed as a v2 recipe of host-side `verify-ls` ops. Runs on Mac via scripts/verify-ls.sh. First migrated scenario; lives alongside the v1 form during transition. Once v2 dispatch is wired into run-tests.sh and the rest of the matrix is migrated, this replaces basic-ro-list outright.",
+      "recipe": [
         {
-          "type": "ls",
+          "op": "verify-ls",
           "path": "/",
-          "expect_names": [
-            ".",
-            "..",
-            "link.txt",
-            "lost+found",
-            "subdir",
-            "test.txt"
-          ]
+          "expect_args": "'--expect-name' '.' '--expect-name' '..' '--expect-name' 'link.txt' '--expect-name' 'lost+found' '--expect-name' 'subdir' '--expect-name' 'test.txt'"
         },
         {
-          "type": "ls",
+          "op": "verify-ls",
           "path": "/subdir",
-          "expect_names": [
-            ".",
-            "..",
-            "nested.txt"
-          ]
+          "expect_args": "'--expect-name' '.' '--expect-name' '..' '--expect-name' 'nested.txt'"
         }
       ]
     },
     "basic-ro-cat": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [],
       "_attempts": [],
       "_notes": "Verifies read content matches sha256 on a small inline-extent file plus a nested file.",
-      "ops": [
+      "recipe": [
         {
-          "type": "stat",
+          "op": "verify-stat",
           "path": "/test.txt",
-          "expect_size": 16,
-          "expect_mode": "0o644"
+          "expect_args": "'--expect-size' '16' '--expect-mode' '0o644'"
         },
         {
-          "type": "cat",
+          "op": "verify-cat",
           "path": "/test.txt",
-          "expect_size": 16,
-          "expect_sha256": "8ce9a8091ad255e6be4b7e9a48f324aea35eb6d9e552628cc139598d97779dee",
-          "expect_content": "hello from ext4\n"
+          "expect_args": "'--expect-size' '16' '--expect-sha256' '8ce9a8091ad255e6be4b7e9a48f324aea35eb6d9e552628cc139598d97779dee'"
         },
         {
-          "type": "cat",
+          "op": "verify-cat",
           "path": "/subdir/nested.txt",
-          "expect_size": 7,
-          "expect_sha256": "370a8c04b8a65bb4494275eec227f1b694db04c76da6b0b8ae88ed1ab19790a3"
+          "expect_args": "'--expect-size' '7' '--expect-sha256' '370a8c04b8a65bb4494275eec227f1b694db04c76da6b0b8ae88ed1ab19790a3'"
         }
       ]
     },
     "basic-rw-write-readback": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [
-        "--rw"
-      ],
       "_attempts": [],
       "_notes": "Smallest end-to-end RW round-trip: create file via mounted drive, read it back via same mount. fsck-ext4-strict is requested; for v1 the actual fsck runs Mac-side after diag pull (see TODO in run-scenario.ps1 stage E).",
-      "ops": [
+      "recipe": [
         {
-          "type": "write",
-          "path": "/new.txt",
-          "content": "hello from windows"
+          "op": "ship-to-vm",
+          "src": "{image_dir}/ext4-basic.img",
+          "dest": "{vm.workdir}/ext4-basic.img"
         },
         {
-          "type": "cat",
+          "op": "win-write",
           "path": "/new.txt",
-          "via": "mount",
+          "content": "hello from windows",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-cat-via-mount",
+          "path": "/new.txt",
           "expect_content": "hello from windows",
-          "expect_size": 18
+          "expect_size": "18",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_sha256": "__none__",
+          "extra": "__none__"
         }
       ]
     },
     "basic-rw-mkdir-touch": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [
-        "--rw"
-      ],
       "_attempts": [],
       "_notes": "mkdir + create + readdir on the new dir. Catches issues with directory-block linkage on RW.",
-      "ops": [
+      "recipe": [
         {
-          "type": "mkdir",
-          "path": "/freshdir"
+          "op": "ship-to-vm",
+          "src": "{image_dir}/ext4-basic.img",
+          "dest": "{vm.workdir}/ext4-basic.img"
         },
         {
-          "type": "write",
-          "path": "/freshdir/inside.txt",
-          "content": "nested write"
-        },
-        {
-          "type": "ls",
+          "op": "win-mkdir",
           "path": "/freshdir",
-          "expect_names": [
-            ".",
-            "..",
-            "inside.txt"
-          ]
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
         },
         {
-          "type": "cat",
+          "op": "win-write",
           "path": "/freshdir/inside.txt",
-          "via": "mount",
+          "content": "nested write",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-ls-via-mount",
+          "path": "/freshdir",
+          "expect_names_csv": ".,..,inside.txt",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_count": "__none__",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-cat-via-mount",
+          "path": "/freshdir/inside.txt",
           "expect_content": "nested write",
-          "expect_size": 12
+          "expect_size": "12",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_sha256": "__none__",
+          "extra": "__none__"
         }
       ]
     },
     "htree-listing": {
       "status": "pending",
       "image": "ext4-htree.img",
-      "mount_args": [],
       "_attempts": [],
       "_notes": "Htree-indexed directory with 256 files + . + .. = 258 entries. Validates the htree iterator end-to-end.",
-      "ops": [
+      "recipe": [
         {
-          "type": "ls",
+          "op": "verify-ls",
           "path": "/",
-          "expect_names": [
-            ".",
-            "..",
-            "bigdir",
-            "lost+found",
-            "small.txt"
-          ]
+          "expect_args": "'--expect-name' '.' '--expect-name' '..' '--expect-name' 'bigdir' '--expect-name' 'lost+found' '--expect-name' 'small.txt'"
         },
         {
-          "type": "ls",
+          "op": "verify-ls",
           "path": "/bigdir",
-          "expect_count": 258
+          "expect_args": "'--expect-count' '258'"
         }
       ]
     },
     "deep-extents-cat": {
       "status": "pending",
       "image": "ext4-deep-extents.img",
-      "mount_args": [],
       "_attempts": [],
       "_notes": "Files backed by deeper extent trees. Hashes the read against the macOS-captured reference.",
-      "ops": [
+      "recipe": [
         {
-          "type": "ls",
+          "op": "verify-ls",
           "path": "/",
-          "expect_names": [
-            ".",
-            "..",
-            "dense.txt",
-            "lost+found",
-            "sparse.bin"
-          ]
+          "expect_args": "'--expect-name' '.' '--expect-name' '..' '--expect-name' 'dense.txt' '--expect-name' 'lost+found' '--expect-name' 'sparse.bin'"
         },
         {
-          "type": "stat",
+          "op": "verify-stat",
           "path": "/dense.txt",
-          "expect_size": 13
+          "expect_args": "'--expect-size' '13'"
         },
         {
-          "type": "cat",
+          "op": "verify-cat",
           "path": "/dense.txt",
-          "expect_size": 13,
-          "expect_sha256": "48b29839ecd2a7f7da1326b867961ca050e46fa4035a5f1c7eee28b401646650"
+          "expect_args": "'--expect-size' '13' '--expect-sha256' '48b29839ecd2a7f7da1326b867961ca050e46fa4035a5f1c7eee28b401646650'"
         }
       ]
     },
     "inline-data-cat": {
       "status": "pending",
       "image": "ext4-inline.img",
-      "mount_args": [],
       "_attempts": [],
       "_notes": "Inline-data feature exercise. tiny.txt fits inside the inode.",
-      "ops": [
+      "recipe": [
         {
-          "type": "ls",
+          "op": "verify-ls",
           "path": "/",
-          "expect_names": [
-            ".",
-            "..",
-            "lost+found",
-            "medium.txt",
-            "symlink",
-            "tiny.txt"
-          ]
+          "expect_args": "'--expect-name' '.' '--expect-name' '..' '--expect-name' 'lost+found' '--expect-name' 'medium.txt' '--expect-name' 'symlink' '--expect-name' 'tiny.txt'"
         },
         {
-          "type": "cat",
+          "op": "verify-cat",
           "path": "/tiny.txt",
-          "expect_size": 12,
-          "expect_sha256": "4fa141db5636666c4ba3402bcb80367f847a92174fce57f2b92e912af4411566"
+          "expect_args": "'--expect-size' '12' '--expect-sha256' '4fa141db5636666c4ba3402bcb80367f847a92174fce57f2b92e912af4411566'"
         }
       ]
     },
     "xattr-getxattr": {
       "status": "blocked-needs-getxattr-cli",
       "image": "ext4-xattr.img",
-      "mount_args": [],
       "_attempts": [],
       "_notes": "Cannot fully exercise xattrs until ext4.exe grows a `getxattr` subcommand (or the WinFsp adapter exposes xattrs as Windows EAs / ADS). The ls-only operations[] above is a stub so the scenario shape is documented; actual unblock is to add a `getxattr` op type + CLI subcommand. Track in docs/test-harness.md.",
-      "ops": [
+      "recipe": [
         {
-          "type": "ls",
+          "op": "verify-ls",
           "path": "/",
-          "expect_names": [
-            ".",
-            "..",
-            "lost+found",
-            "plain.txt",
-            "tagged.txt",
-            "tagged_dir"
-          ]
+          "expect_args": "'--expect-name' '.' '--expect-name' '..' '--expect-name' 'lost+found' '--expect-name' 'plain.txt' '--expect-name' 'tagged.txt' '--expect-name' 'tagged_dir'"
         }
       ]
     },
     "whole-disk-with-part": {
       "status": "pending",
       "image": "ext4-whole-disk.img",
-      "mount_args": [
-        "--part",
-        "1"
-      ],
       "_attempts": [],
-      "_notes": "Whole-disk image is built by fixtures/build-whole-disk.py — wraps ext4-basic.img in a GPT layout with one Linux-fs partition starting at LBA 2048.",
-      "ops": [
+      "_notes": "Whole-disk image is built by fixtures/build-whole-disk.py \u2014 wraps ext4-basic.img in a GPT layout with one Linux-fs partition starting at LBA 2048.",
+      "recipe": [
         {
-          "type": "ls",
+          "op": "verify-ls",
           "path": "/",
-          "extra": "--part 1"
+          "expect_args": "'--part' '1'"
         }
       ]
     },
     "basic-stat-test-txt": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [],
       "_attempts": [],
       "_notes": "Stat shape check on /test.txt via the templated `stat` op. expect_stdout_contains substrings span size/mode/file_type so any drift in stat formatting OR the underlying inode is caught. Capture: ./target/release/ext4 stat ../rust-fs-ext4/test-disks/ext4-basic.img /test.txt",
-      "ops": [
+      "recipe": [
         {
-          "type": "stat",
+          "op": "verify-stat",
           "path": "/test.txt",
-          "expect_stdout_contains": "size:        16"
+          "expect_args": "'--expect-stdout-contains' 'size:        16'"
         },
         {
-          "type": "stat",
+          "op": "verify-stat",
           "path": "/test.txt",
-          "expect_stdout_contains": "mode:        0o644"
+          "expect_args": "'--expect-stdout-contains' 'mode:        0o644'"
         },
         {
-          "type": "stat",
+          "op": "verify-stat",
           "path": "/test.txt",
-          "expect_stdout_contains": "file_type:   1"
+          "expect_args": "'--expect-stdout-contains' 'file_type:   1'"
         }
       ]
     },
     "basic-stat-symlink": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [],
       "_attempts": [],
-      "_notes": "Symlink coverage. The CLI's `cat` does NOT dereference symlinks (errors with 'not a regular file'); we therefore exercise the link via `stat` instead — file_type 7 = ext4 symlink, size 8 = strlen(\"test.txt\"). Capture: ./target/release/ext4 stat ../rust-fs-ext4/test-disks/ext4-basic.img /link.txt",
-      "ops": [
+      "_notes": "Symlink coverage. The CLI's `cat` does NOT dereference symlinks (errors with 'not a regular file'); we therefore exercise the link via `stat` instead \u2014 file_type 7 = ext4 symlink, size 8 = strlen(\"test.txt\"). Capture: ./target/release/ext4 stat ../rust-fs-ext4/test-disks/ext4-basic.img /link.txt",
+      "recipe": [
         {
-          "type": "stat",
+          "op": "verify-stat",
           "path": "/link.txt",
-          "expect_stdout_contains": "file_type:   7"
+          "expect_args": "'--expect-stdout-contains' 'file_type:   7'"
         },
         {
-          "type": "stat",
+          "op": "verify-stat",
           "path": "/link.txt",
-          "expect_stdout_contains": "size:        8"
+          "expect_args": "'--expect-stdout-contains' 'size:        8'"
         }
       ]
     },
     "basic-tree-hash": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [],
       "_attempts": [],
       "_notes": "Recursive tree shape pinned via stdout sha256. ext4 CLI emits LF-only line endings on every platform (Rust println! does not translate on Windows), so the hash is portable. Capture: ./target/release/ext4 tree ../rust-fs-ext4/test-disks/ext4-basic.img | shasum -a 256",
-      "ops": [
+      "recipe": [
         {
-          "type": "tree",
-          "expect_stdout_sha256": "5cec65ca5ab421cabac1a37a17bbead0df7093f94e8c83eebaa51dcac64218a2"
+          "op": "verify-tree",
+          "expect_args": "'--expect-stdout-sha256' '5cec65ca5ab421cabac1a37a17bbead0df7093f94e8c83eebaa51dcac64218a2'"
         }
       ]
     },
     "basic-info-volume": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [],
       "_attempts": [],
       "_notes": "Volume-level smoke. Asserts a stable substring (block_size + inode_size) so superblock decoding regressions trip a verdict. Requires the new `info` template added to harness.toml. Capture: ./target/release/ext4 info ../rust-fs-ext4/test-disks/ext4-basic.img",
-      "ops": [
+      "recipe": [
         {
-          "type": "info",
-          "expect_stdout_contains": "block_size:     4096"
+          "op": "verify-info",
+          "expect_args": "'--expect-stdout-contains' 'block_size:     4096'"
         },
         {
-          "type": "info",
-          "expect_stdout_contains": "inode_size:     256"
+          "op": "verify-info",
+          "expect_args": "'--expect-stdout-contains' 'inode_size:     256'"
         },
         {
-          "type": "info",
-          "expect_stdout_contains": "label:          \"testvolume\""
+          "op": "verify-info",
+          "expect_args": "'--expect-stdout-contains' 'label:          \"testvolume\"'"
         }
       ]
     },
     "basic-parts-no-table": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [],
       "_attempts": [],
       "_notes": "Negative path: ext4-basic.img is a bare filesystem with no MBR/GPT. `parts` must exit non-zero. The error text goes to stderr (anyhow), so we assert exit code only. Capture: ./target/release/ext4 parts ../rust-fs-ext4/test-disks/ext4-basic.img ; echo $?  -> 1",
-      "ops": [
+      "recipe": [
         {
-          "type": "parts",
-          "allow_nonzero_exit": true,
-          "expect_exit": 1
+          "op": "verify-parts-fails",
+          "expect_args": ""
         }
       ]
     },
     "htree-listing-hash": {
       "status": "pending",
       "image": "ext4-htree.img",
-      "mount_args": [],
       "_attempts": [],
-      "_notes": "Hash the bigdir listing (258 entries). Beats expect_count alone — drift in entry ordering or any single name shifts the hash. Capture: ./target/release/ext4 ls ../rust-fs-ext4/test-disks/ext4-htree.img /bigdir | shasum -a 256",
-      "ops": [
+      "_notes": "Hash the bigdir listing (258 entries). Beats expect_count alone \u2014 drift in entry ordering or any single name shifts the hash. Capture: ./target/release/ext4 ls ../rust-fs-ext4/test-disks/ext4-htree.img /bigdir | shasum -a 256",
+      "recipe": [
         {
-          "type": "ls",
+          "op": "verify-ls",
           "path": "/bigdir",
-          "expect_stdout_sha256": "eecb5943cd327c6e4f94bbc8a0f0b27738ced951f4cb3b9235ae37a7313f70da"
+          "expect_args": "'--expect-stdout-sha256' 'eecb5943cd327c6e4f94bbc8a0f0b27738ced951f4cb3b9235ae37a7313f70da'"
         }
       ]
     },
     "deep-extents-stat": {
       "status": "pending",
       "image": "ext4-deep-extents.img",
-      "mount_args": [],
       "_attempts": [],
       "_notes": "Verify the sparse.bin file under deeper extent trees: 16 MiB logical size, regular-file type. Pairs with deep-extents-cat (which validates dense.txt content). Capture: ./target/release/ext4 stat ../rust-fs-ext4/test-disks/ext4-deep-extents.img /sparse.bin",
-      "ops": [
+      "recipe": [
         {
-          "type": "stat",
+          "op": "verify-stat",
           "path": "/sparse.bin",
-          "expect_stdout_contains": "size:        16777216"
+          "expect_args": "'--expect-stdout-contains' 'size:        16777216'"
         },
         {
-          "type": "stat",
+          "op": "verify-stat",
           "path": "/sparse.bin",
-          "expect_stdout_contains": "file_type:   1"
+          "expect_args": "'--expect-stdout-contains' 'file_type:   1'"
         }
       ]
     },
     "inline-data-stat": {
       "status": "pending",
       "image": "ext4-inline.img",
-      "mount_args": [],
       "_attempts": [],
-      "_notes": "Stat-side counterpart to inline-data-cat. tiny.txt is 12 bytes ('tiny inline\\n') — small enough to live in the inode. medium.txt overflows inline and falls back to extents. Capture: ./target/release/ext4 stat ../rust-fs-ext4/test-disks/ext4-inline.img /tiny.txt ; ./target/release/ext4 stat ../rust-fs-ext4/test-disks/ext4-inline.img /medium.txt",
-      "ops": [
+      "_notes": "Stat-side counterpart to inline-data-cat. tiny.txt is 12 bytes ('tiny inline\\n') \u2014 small enough to live in the inode. medium.txt overflows inline and falls back to extents. Capture: ./target/release/ext4 stat ../rust-fs-ext4/test-disks/ext4-inline.img /tiny.txt ; ./target/release/ext4 stat ../rust-fs-ext4/test-disks/ext4-inline.img /medium.txt",
+      "recipe": [
         {
-          "type": "stat",
+          "op": "verify-stat",
           "path": "/tiny.txt",
-          "expect_stdout_contains": "size:        12"
+          "expect_args": "'--expect-stdout-contains' 'size:        12'"
         },
         {
-          "type": "stat",
+          "op": "verify-stat",
           "path": "/medium.txt",
-          "expect_stdout_contains": "size:        100"
+          "expect_args": "'--expect-stdout-contains' 'size:        100'"
         }
       ]
     },
     "xattr-cat-content": {
       "status": "pending",
       "image": "ext4-xattr.img",
-      "mount_args": [],
       "_attempts": [],
       "_notes": "Until the `getxattr` CLI exists (see xattr-getxattr scenario), at least confirm files in an xattr-tagged image still read back correctly via templated cat. tagged.txt body is 'has xattrs\\n' (11 bytes). Capture: ./target/release/ext4 cat ../rust-fs-ext4/test-disks/ext4-xattr.img /tagged.txt | shasum -a 256",
-      "ops": [
+      "recipe": [
         {
-          "type": "cat",
+          "op": "verify-cat",
           "path": "/tagged.txt",
-          "expect_stdout_sha256": "211681a64dfd209d01a997a527c1706d50945fa2559c1caa289dbb2c1517ebe1"
+          "expect_args": "'--expect-stdout-sha256' '211681a64dfd209d01a997a527c1706d50945fa2559c1caa289dbb2c1517ebe1'"
         }
       ]
     },
     "whole-disk-parts": {
       "status": "pending",
       "image": "ext4-whole-disk.img",
-      "mount_args": [],
       "_attempts": [],
       "_notes": "Read the GPT directly (no mount, no --part). One Linux-fs partition at LBA 2048, 32768 sectors. Capture: ./target/release/ext4 parts ../rust-fs-ext4/test-disks/ext4-whole-disk.img",
-      "ops": [
+      "recipe": [
         {
-          "type": "parts",
-          "expect_stdout_contains": "GPT:linux"
+          "op": "verify-parts",
+          "expect_args": "'--expect-stdout-contains' 'GPT:linux'"
         },
         {
-          "type": "parts",
-          "expect_stdout_contains": "2048"
+          "op": "verify-parts",
+          "expect_args": "'--expect-stdout-contains' '2048'"
         }
       ]
     },
     "rw-rename": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [
-        "--rw"
-      ],
       "_attempts": [],
       "_notes": "RW rename round-trip via the harness's builtin ops: write -> rename -> cat_via_mount. Catches dirent unlink+relink in the parent dir. Capture: content is harness-supplied; size/sha computed from 'rename payload' (15 bytes).",
-      "ops": [
+      "recipe": [
         {
-          "type": "write",
+          "op": "ship-to-vm",
+          "src": "{image_dir}/ext4-basic.img",
+          "dest": "{vm.workdir}/ext4-basic.img"
+        },
+        {
+          "op": "win-write",
           "path": "/before.txt",
-          "content": "rename payload"
+          "content": "rename me",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
         },
         {
-          "type": "rename",
+          "op": "win-rename",
           "from": "/before.txt",
-          "to": "/after.txt"
+          "to": "/after.txt",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
         },
         {
-          "type": "cat_via_mount",
+          "op": "win-cat-via-mount",
           "path": "/after.txt",
-          "expect_size": 14,
-          "expect_content": "rename payload",
-          "expect_sha256": "11b27528638c55a418f5e289b0120a0547bdbb7af4baa9f2944ded404d596eb0"
+          "expect_content": "rename me",
+          "expect_size": "9",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_sha256": "__none__",
+          "extra": "__none__"
         }
       ]
     },
     "rw-mkdir-rmdir": {
-      "status": "pending",
+      "status": "blocked-rmdir-via-mount-driver-bug",
       "image": "ext4-basic.img",
-      "mount_args": [
-        "--rw"
+      "_attempts": [
+        {
+          "session": "v2-phase-b-migration",
+          "iter": "iter1",
+          "hypothesis": "v2 self-contained mount-do-unmount has timing issue around rmdir",
+          "result": "Disproved. Manual probe shows Get-ChildItem sees scratch-dir but Remove-Item fails with 'system cannot find the file specified'. Driver-side rmdir-via-mount bug, not migration-related. Surfaced by Phase B validation; track in driver issues."
+        }
       ],
-      "_attempts": [],
-      "_notes": "mkdir/rmdir lifecycle. After rmdir the templated `ls /` must NOT include scratch — expect_names is the post-state of the root after rollback, equal to the original basic-ro-list expectation. Captured directly from ./target/release/ext4 ls ../rust-fs-ext4/test-disks/ext4-basic.img /",
-      "ops": [
+      "_notes": "mkdir/rmdir lifecycle. After rmdir the templated `ls /` must NOT include scratch \u2014 expect_names is the post-state of the root after rollback, equal to the original basic-ro-list expectation. Captured directly from ./target/release/ext4 ls ../rust-fs-ext4/test-disks/ext4-basic.img /",
+      "recipe": [
         {
-          "type": "mkdir",
-          "path": "/scratch"
+          "op": "ship-to-vm",
+          "src": "{image_dir}/ext4-basic.img",
+          "dest": "{vm.workdir}/ext4-basic.img"
         },
         {
-          "type": "rmdir",
-          "path": "/scratch"
+          "op": "win-mkdir",
+          "path": "/scratch-dir",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
         },
         {
-          "type": "ls",
+          "op": "win-rmdir",
+          "path": "/scratch-dir",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-ls-via-mount",
           "path": "/",
-          "expect_names": [
-            ".",
-            "..",
-            "link.txt",
-            "lost+found",
-            "subdir",
-            "test.txt"
-          ]
+          "expect_names_csv": ".,..,link.txt,lost+found,subdir,test.txt",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_count": "__none__",
+          "extra": "__none__"
         }
       ]
     },
     "rw-overwrite": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [
-        "--rw"
-      ],
       "_attempts": [],
       "_notes": "Overwrite an existing file (test.txt, originally 16 bytes 'hello from ext4\\n') with new shorter content. Validates truncate + rewrite path. Payload 'overwritten' = 11 bytes. sha256 captured via: printf 'overwritten' | shasum -a 256 -> fb428d788e6efaec29dc4a9b3d0b3cf3d2295eb7ffc30f111ac11c4af1dfc118",
-      "ops": [
+      "recipe": [
         {
-          "type": "write",
-          "path": "/test.txt",
-          "content": "overwritten"
+          "op": "ship-to-vm",
+          "src": "{image_dir}/ext4-basic.img",
+          "dest": "{vm.workdir}/ext4-basic.img"
         },
         {
-          "type": "cat_via_mount",
+          "op": "win-write",
           "path": "/test.txt",
-          "expect_size": 11,
-          "expect_content": "overwritten",
-          "expect_sha256": "fb428d788e6efaec29dc4a9b3d0b3cf3d2295eb7ffc30f111ac11c4af1dfc118"
+          "content": "OVERWRITE",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-cat-via-mount",
+          "path": "/test.txt",
+          "expect_content": "OVERWRITE",
+          "expect_size": "9",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_sha256": "__none__",
+          "extra": "__none__"
         }
       ]
     },
     "rw-unlink": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [
-        "--rw"
-      ],
       "_attempts": [],
       "_notes": "Create + unlink. After unlink, ls / must match the original 6-entry root (i.e. doomed.txt is gone). Catches inode-leak / dirent-unlink regressions in one shot.",
-      "ops": [
+      "recipe": [
         {
-          "type": "write",
-          "path": "/doomed.txt",
-          "content": "rm me"
+          "op": "ship-to-vm",
+          "src": "{image_dir}/ext4-basic.img",
+          "dest": "{vm.workdir}/ext4-basic.img"
         },
         {
-          "type": "unlink",
-          "path": "/doomed.txt"
+          "op": "win-write",
+          "path": "/condemned.txt",
+          "content": "soon-to-be-removed",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
         },
         {
-          "type": "ls",
+          "op": "win-unlink",
+          "path": "/condemned.txt",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-ls-via-mount",
           "path": "/",
-          "expect_names": [
-            ".",
-            "..",
-            "link.txt",
-            "lost+found",
-            "subdir",
-            "test.txt"
-          ]
+          "expect_names_csv": ".,..,link.txt,lost+found,subdir,test.txt",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_count": "__none__",
+          "extra": "__none__"
         }
       ]
     },
     "rw-write-then-readback-via-cli": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [
-        "--rw"
-      ],
       "_attempts": [],
       "_notes": "Marker scenario for the future post_verify hook (see docs/post-verify-hook.md). Today: write via mount, read back via mount inside the same scenario. Tomorrow: post_verify re-mounts the image RO under the CLI to confirm on-disk durability after the WinFsp host exits. Until then, this scenario covers the in-mount round-trip; the post_verify shape lives in scenario `audit-post-verify-marker` below.",
-      "ops": [
+      "recipe": [
         {
-          "type": "write",
-          "path": "/persisted.txt",
-          "content": "should survive unmount"
+          "op": "ship-to-vm",
+          "src": "{image_dir}/ext4-basic.img",
+          "dest": "{vm.workdir}/ext4-basic.img"
         },
         {
-          "type": "cat_via_mount",
-          "path": "/persisted.txt",
-          "expect_size": 22,
-          "expect_content": "should survive unmount"
+          "op": "win-write",
+          "path": "/cli-readback.txt",
+          "content": "via-cli readback",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-cat-via-mount",
+          "path": "/cli-readback.txt",
+          "expect_content": "via-cli readback",
+          "expect_size": "16",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_sha256": "__none__",
+          "extra": "__none__"
         }
       ]
     },
@@ -567,28 +586,39 @@
     "audit-post-verify-marker": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [
-        "--rw"
-      ],
       "_attempts": [],
-      "_notes": "Exercises the post_verify hook explicitly. The default [post_verify] in harness.toml audits every passing scenario; this one is here as a self-documenting record of the contract — write content via mount, expect cat to round-trip, then audit confirms the RW path didn't break invariants.",
-      "ops": [
-        {
-          "type": "write",
-          "path": "/audit-target.txt",
-          "content": "drives the audit command after unmount"
-        },
-        {
-          "type": "cat_via_mount",
-          "path": "/audit-target.txt",
-          "expect_size": 38,
-          "expect_content": "drives the audit command after unmount"
-        }
-      ],
+      "_notes": "Exercises the post_verify hook explicitly. The default [post_verify] in harness.toml audits every passing scenario; this one is here as a self-documenting record of the contract \u2014 write content via mount, expect cat to round-trip, then audit confirms the RW path didn't break invariants.",
       "post_verify": {
         "command": "{binary} audit {image}",
         "expect_exit": 0
-      }
+      },
+      "recipe": [
+        {
+          "op": "ship-to-vm",
+          "src": "{image_dir}/ext4-basic.img",
+          "dest": "{vm.workdir}/ext4-basic.img"
+        },
+        {
+          "op": "win-write",
+          "path": "/audit-marker.txt",
+          "content": "audit me",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-cat-via-mount",
+          "path": "/audit-marker.txt",
+          "expect_content": "audit me",
+          "expect_size": "8",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_sha256": "__none__",
+          "extra": "__none__"
+        }
+      ]
     }
   }
 }

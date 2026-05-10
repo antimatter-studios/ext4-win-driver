@@ -152,6 +152,68 @@ pub fn ls(mt: &MountArgs, path: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn verify_ls(
+    mt: &MountArgs,
+    path: &str,
+    expect: &[String],
+    expect_count: Option<usize>,
+) -> Result<()> {
+    let m = Mount::open(mt)?;
+    let cp = CString::new(path).context("path contains NUL byte")?;
+    let iter = unsafe { fs_ext4_dir_open(m.fs, cp.as_ptr()) };
+    if iter.is_null() {
+        bail!("dir_open({path:?}) failed: {}", last_err());
+    }
+    let mut got = Vec::<String>::new();
+    loop {
+        let e = unsafe { fs_ext4_dir_next(iter) };
+        if e.is_null() {
+            break;
+        }
+        let entry = unsafe { &*e };
+        let name_bytes: Vec<u8> = entry.name[..entry.name_len as usize]
+            .iter()
+            .map(|b| *b as u8)
+            .collect();
+        got.push(String::from_utf8_lossy(&name_bytes).into_owned());
+    }
+    unsafe { fs_ext4_dir_close(iter) };
+
+    let mut errs: Vec<String> = Vec::new();
+
+    if !expect.is_empty() {
+        use std::collections::BTreeSet;
+        let got_set: BTreeSet<&str> = got.iter().map(|s| s.as_str()).collect();
+        let want_set: BTreeSet<&str> = expect.iter().map(|s| s.as_str()).collect();
+        if got_set != want_set {
+            let missing: Vec<&str> = want_set.difference(&got_set).copied().collect();
+            let extra: Vec<&str> = got_set.difference(&want_set).copied().collect();
+            let mut msg = format!("name-set drift at {path}:");
+            if !missing.is_empty() {
+                msg.push_str(&format!("\n  missing: {missing:?}"));
+            }
+            if !extra.is_empty() {
+                msg.push_str(&format!("\n  unexpected: {extra:?}"));
+            }
+            errs.push(msg);
+        }
+    }
+
+    if let Some(want) = expect_count {
+        if got.len() != want {
+            errs.push(format!(
+                "count mismatch at {path}: got={} want={want}",
+                got.len()
+            ));
+        }
+    }
+
+    if errs.is_empty() {
+        return Ok(());
+    }
+    bail!("verify-ls {}", errs.join(" / "));
+}
+
 // ---------------------------------------------------------------------------
 // stat
 // ---------------------------------------------------------------------------
