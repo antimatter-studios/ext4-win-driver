@@ -69,6 +69,21 @@ enum Cmd {
         #[arg(default_value = "/")]
         path: String,
     },
+    /// Verifier shape of `ls` for v2 recipe steps. Reads `path`, compares
+    /// the resulting name set against `--expect-name` (repeatable). Exits
+    /// 0 on exact-set match, non-zero on any drift; prints a diff to stderr
+    /// so the harness's per-step `stderr.txt` carries enough detail to
+    /// triage without re-running.
+    VerifyLs {
+        #[command(flatten)]
+        mt: MountArgs,
+        #[arg(default_value = "/")]
+        path: String,
+        /// Expected directory entry name. Repeat for each name. Order
+        /// doesn't matter; the comparison is set-based.
+        #[arg(long = "expect-name", required = true)]
+        expect_names: Vec<String>,
+    },
     /// Stat a single path.
     Stat {
         #[command(flatten)]
@@ -143,6 +158,11 @@ fn main() -> Result<()> {
     match cli.cmd {
         Cmd::Info { mt } => cmd::info(&mt),
         Cmd::Ls { mt, path } => cmd::ls(&mt, &path),
+        Cmd::VerifyLs {
+            mt,
+            path,
+            expect_names,
+        } => cmd::verify_ls(&mt, &path, &expect_names),
         Cmd::Stat { mt, path } => cmd::stat(&mt, &path),
         Cmd::Cat { mt, path } => cmd::cat(&mt, &path),
         Cmd::Tree { mt, max_depth } => cmd::tree(&mt, max_depth),

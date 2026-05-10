@@ -253,17 +253,18 @@ After cloning, initialise the submodules:
 git submodule update --init --recursive
 ```
 
-One-time VM setup, on the Mac:
+Run the test matrix (Mac -> SSH -> Windows VM -> diag pull):
 
 ```sh
-bash vendor/fs-test-harness/scripts/setup-local.sh        # writes .test-env
+bash vendor/fs-test-harness/scripts/run-tests.sh                 # full matrix
+bash vendor/fs-test-harness/scripts/run-tests.sh basic-ro-list   # one scenario
+bash vendor/fs-test-harness/scripts/run-tests.sh --help          # all flags
 ```
 
-Run a scenario end-to-end (Mac -> SSH -> Windows VM -> diag pull):
-
-```sh
-bash vendor/fs-test-harness/scripts/test-windows-matrix.sh basic-ro-list
-```
+On the very first run, the script prompts for VM details (user, IP,
+SSH key, workdir, image dir) and writes `.test-env`; subsequent runs
+skip straight to ship + run + diag-pull. Use `--reset` to wipe
+`.test-env` and re-prompt (e.g. after VM IP change).
 
 Diagnostics land under `test-diagnostics/run-<UTC>/`. See the harness's
 [`docs/triage-protocol.md`](./vendor/fs-test-harness/docs/triage-protocol.md)

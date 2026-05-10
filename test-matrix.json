@@ -32,6 +32,24 @@
         }
       ]
     },
+    "basic-ro-list-v2": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "_attempts": [],
+      "_notes": "v2 pilot — same as basic-ro-list but expressed as a v2 recipe of host-side `verify-ls` ops. Runs on Mac via scripts/verify-ls.sh. First migrated scenario; lives alongside the v1 form during transition. Once v2 dispatch is wired into run-tests.sh and the rest of the matrix is migrated, this replaces basic-ro-list outright.",
+      "recipe": [
+        {
+          "op": "verify-ls",
+          "path": "/",
+          "expect_names_args": "--expect-name . --expect-name .. --expect-name link.txt --expect-name lost+found --expect-name subdir --expect-name test.txt"
+        },
+        {
+          "op": "verify-ls",
+          "path": "/subdir",
+          "expect_names_args": "--expect-name . --expect-name .. --expect-name nested.txt"
+        }
+      ]
+    },
     "basic-ro-cat": {
       "status": "pending",
       "image": "ext4-basic.img",

@@ -61,7 +61,7 @@ Workflow:
 
 1. The Windows VM finishes the scenario, leaves the post-RW image in
    `vm.workdir`.
-2. `scripts/test-windows-matrix.sh` (Mac orchestrator) `scp`s the image
+2. `scripts/run-tests.sh` (Mac orchestrator) `scp`s the image
    back to the Mac.
 3. Mac runs `fsck.ext4 -fn <image>` (Homebrew `e2fsprogs`,
    `brew install e2fsprogs`; the binary lives at
@@ -72,7 +72,7 @@ Workflow:
 Pros: real upstream `fsck.ext4`, runs Mac-side so no VM bloat. Cons:
 **doesn't fit the harness's stage-E hook** — that runs on the VM, not
 the orchestrator. Implementing this means a separate "post-pull verify"
-step in `test-windows-matrix.sh`, not a `[post_verify]` template. It
+step in `run-tests.sh`, not a `[post_verify]` template. It
 also requires every contributor to have e2fsprogs installed locally.
 
 ### (b) Sidecar Linux container/VM accessible from the Mac orchestrator

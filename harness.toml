@@ -33,6 +33,10 @@ env_prefix = "$env:LIBCLANG_PATH = 'C:\\Program Files\\LLVM\\bin';"
 # fsck = "fsck.ext4 -fn"
 
 [ops]
+# v1 ops (bare command string -> implicit `host = "vm"`). Consumed by
+# the legacy `run-scenario.ps1` driver. Kept until every scenario has
+# migrated to v2 recipes; then we drop these and `run-scenario.ps1`.
+#
 # {extra} carries per-op CLI flags (e.g. `--part 1` for whole-disk
 # images). Empty by default; set per scenario via the op's `extra`
 # field.
@@ -42,6 +46,18 @@ stat = "{binary} stat {image} {path} {extra}"
 tree = "{binary} tree {image} {extra}"
 parts = "{binary} parts {image}"
 info  = "{binary} info  {image}"
+
+# v2 ops (structured tables — host/command/expect_exit). Each is
+# dispatched per-recipe-step; `host = "host"` runs on the Mac, where
+# our pure-CLI ops belong (image lives on host, no SSH needed).
+# Wrapper scripts in ./scripts/ resolve the host-side binary path
+# (no .exe) so the harness doesn't need cross-platform substitution
+# magic. Future ops follow the same shape.
+
+[ops.verify-ls]
+host = "host"
+command = "bash scripts/verify-ls.sh {scenario.image} {step.path} {step.expect_names_args}"
+expect_exit = 0
 
 [mount]
 # WinFsp mount, foreground. The runner kills the background process on
