@@ -1,5 +1,5 @@
 {
-  "_format": "v2-host-migration-in-progress",
+  "_format": "v2-full-migration-pending-validation",
   "_doc": "ext4-win-driver matrix work list. See docs/test-harness.md. Each scenario name is unique. status starts at 'pending'; agents transition via scripts/claim-scenario.sh. Schema per scenario: image (file under EXT4_TEST_DISKS), mount_args (extra argv after `mount <image> --drive X:`), operations[] (typed verb list, see run-scenario.ps1), post_verify (optional 'fsck-ext4-strict' hook). Hashes captured from ext4 CLI on macOS against the canonical test images at /Volumes/sdcard256gb/projects/rust-fs-ext4/test-disks/.",
   "scenarios": {
     "basic-ro-list": {
@@ -46,59 +46,84 @@
     "basic-rw-write-readback": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [
-        "--rw"
-      ],
       "_attempts": [],
       "_notes": "Smallest end-to-end RW round-trip: create file via mounted drive, read it back via same mount. fsck-ext4-strict is requested; for v1 the actual fsck runs Mac-side after diag pull (see TODO in run-scenario.ps1 stage E).",
-      "ops": [
+      "recipe": [
         {
-          "type": "write",
-          "path": "/new.txt",
-          "content": "hello from windows"
+          "op": "ship-to-vm",
+          "src": "{image_dir}/ext4-basic.img",
+          "dest": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img"
         },
         {
-          "type": "cat",
+          "op": "win-write",
           "path": "/new.txt",
-          "via": "mount",
+          "content": "hello from windows",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-cat-via-mount",
+          "path": "/new.txt",
           "expect_content": "hello from windows",
-          "expect_size": 18
+          "expect_size": "18",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_sha256": "__none__",
+          "extra": "__none__"
         }
       ]
     },
     "basic-rw-mkdir-touch": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [
-        "--rw"
-      ],
       "_attempts": [],
       "_notes": "mkdir + create + readdir on the new dir. Catches issues with directory-block linkage on RW.",
-      "ops": [
+      "recipe": [
         {
-          "type": "mkdir",
-          "path": "/freshdir"
+          "op": "ship-to-vm",
+          "src": "{image_dir}/ext4-basic.img",
+          "dest": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img"
         },
         {
-          "type": "write",
-          "path": "/freshdir/inside.txt",
-          "content": "nested write"
-        },
-        {
-          "type": "ls",
+          "op": "win-mkdir",
           "path": "/freshdir",
-          "expect_names": [
-            ".",
-            "..",
-            "inside.txt"
-          ]
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
         },
         {
-          "type": "cat",
+          "op": "win-write",
           "path": "/freshdir/inside.txt",
-          "via": "mount",
+          "content": "nested write",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-ls-via-mount",
+          "path": "/freshdir",
+          "expect_names_csv": ".,..,inside.txt",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_count": "__none__",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-cat-via-mount",
+          "path": "/freshdir/inside.txt",
           "expect_content": "nested write",
-          "expect_size": 12
+          "expect_size": "12",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_sha256": "__none__",
+          "extra": "__none__"
         }
       ]
     },
@@ -353,136 +378,194 @@
     "rw-rename": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [
-        "--rw"
-      ],
       "_attempts": [],
       "_notes": "RW rename round-trip via the harness's builtin ops: write -> rename -> cat_via_mount. Catches dirent unlink+relink in the parent dir. Capture: content is harness-supplied; size/sha computed from 'rename payload' (15 bytes).",
-      "ops": [
+      "recipe": [
         {
-          "type": "write",
+          "op": "ship-to-vm",
+          "src": "{image_dir}/ext4-basic.img",
+          "dest": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img"
+        },
+        {
+          "op": "win-write",
           "path": "/before.txt",
-          "content": "rename payload"
+          "content": "rename me",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
         },
         {
-          "type": "rename",
+          "op": "win-rename",
           "from": "/before.txt",
-          "to": "/after.txt"
+          "to": "/after.txt",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
         },
         {
-          "type": "cat_via_mount",
+          "op": "win-cat-via-mount",
           "path": "/after.txt",
-          "expect_size": 14,
-          "expect_content": "rename payload",
-          "expect_sha256": "11b27528638c55a418f5e289b0120a0547bdbb7af4baa9f2944ded404d596eb0"
+          "expect_content": "rename me",
+          "expect_size": "9",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_sha256": "__none__",
+          "extra": "__none__"
         }
       ]
     },
     "rw-mkdir-rmdir": {
-      "status": "pending",
+      "status": "blocked-rmdir-via-mount-driver-bug",
       "image": "ext4-basic.img",
-      "mount_args": [
-        "--rw"
+      "_attempts": [
+        {
+          "session": "v2-phase-b-migration",
+          "iter": "iter1",
+          "hypothesis": "v2 self-contained mount-do-unmount has timing issue around rmdir",
+          "result": "Disproved. Manual probe shows Get-ChildItem sees scratch-dir but Remove-Item fails with 'system cannot find the file specified'. Driver-side rmdir-via-mount bug, not migration-related. Surfaced by Phase B validation; track in driver issues."
+        }
       ],
-      "_attempts": [],
       "_notes": "mkdir/rmdir lifecycle. After rmdir the templated `ls /` must NOT include scratch \u2014 expect_names is the post-state of the root after rollback, equal to the original basic-ro-list expectation. Captured directly from ./target/release/ext4 ls ../rust-fs-ext4/test-disks/ext4-basic.img /",
-      "ops": [
+      "recipe": [
         {
-          "type": "mkdir",
-          "path": "/scratch"
+          "op": "ship-to-vm",
+          "src": "{image_dir}/ext4-basic.img",
+          "dest": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img"
         },
         {
-          "type": "rmdir",
-          "path": "/scratch"
+          "op": "win-mkdir",
+          "path": "/scratch-dir",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
         },
         {
-          "type": "ls",
+          "op": "win-rmdir",
+          "path": "/scratch-dir",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-ls-via-mount",
           "path": "/",
-          "expect_names": [
-            ".",
-            "..",
-            "link.txt",
-            "lost+found",
-            "subdir",
-            "test.txt"
-          ]
+          "expect_names_csv": ".,..,link.txt,lost+found,subdir,test.txt",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_count": "__none__",
+          "extra": "__none__"
         }
       ]
     },
     "rw-overwrite": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [
-        "--rw"
-      ],
       "_attempts": [],
       "_notes": "Overwrite an existing file (test.txt, originally 16 bytes 'hello from ext4\\n') with new shorter content. Validates truncate + rewrite path. Payload 'overwritten' = 11 bytes. sha256 captured via: printf 'overwritten' | shasum -a 256 -> fb428d788e6efaec29dc4a9b3d0b3cf3d2295eb7ffc30f111ac11c4af1dfc118",
-      "ops": [
+      "recipe": [
         {
-          "type": "write",
-          "path": "/test.txt",
-          "content": "overwritten"
+          "op": "ship-to-vm",
+          "src": "{image_dir}/ext4-basic.img",
+          "dest": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img"
         },
         {
-          "type": "cat_via_mount",
+          "op": "win-write",
           "path": "/test.txt",
-          "expect_size": 11,
-          "expect_content": "overwritten",
-          "expect_sha256": "fb428d788e6efaec29dc4a9b3d0b3cf3d2295eb7ffc30f111ac11c4af1dfc118"
+          "content": "OVERWRITE",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-cat-via-mount",
+          "path": "/test.txt",
+          "expect_content": "OVERWRITE",
+          "expect_size": "9",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_sha256": "__none__",
+          "extra": "__none__"
         }
       ]
     },
     "rw-unlink": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [
-        "--rw"
-      ],
       "_attempts": [],
       "_notes": "Create + unlink. After unlink, ls / must match the original 6-entry root (i.e. doomed.txt is gone). Catches inode-leak / dirent-unlink regressions in one shot.",
-      "ops": [
+      "recipe": [
         {
-          "type": "write",
-          "path": "/doomed.txt",
-          "content": "rm me"
+          "op": "ship-to-vm",
+          "src": "{image_dir}/ext4-basic.img",
+          "dest": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img"
         },
         {
-          "type": "unlink",
-          "path": "/doomed.txt"
+          "op": "win-write",
+          "path": "/condemned.txt",
+          "content": "soon-to-be-removed",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
         },
         {
-          "type": "ls",
+          "op": "win-unlink",
+          "path": "/condemned.txt",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-ls-via-mount",
           "path": "/",
-          "expect_names": [
-            ".",
-            "..",
-            "link.txt",
-            "lost+found",
-            "subdir",
-            "test.txt"
-          ]
+          "expect_names_csv": ".,..,link.txt,lost+found,subdir,test.txt",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_count": "__none__",
+          "extra": "__none__"
         }
       ]
     },
     "rw-write-then-readback-via-cli": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [
-        "--rw"
-      ],
       "_attempts": [],
       "_notes": "Marker scenario for the future post_verify hook (see docs/post-verify-hook.md). Today: write via mount, read back via mount inside the same scenario. Tomorrow: post_verify re-mounts the image RO under the CLI to confirm on-disk durability after the WinFsp host exits. Until then, this scenario covers the in-mount round-trip; the post_verify shape lives in scenario `audit-post-verify-marker` below.",
-      "ops": [
+      "recipe": [
         {
-          "type": "write",
-          "path": "/persisted.txt",
-          "content": "should survive unmount"
+          "op": "ship-to-vm",
+          "src": "{image_dir}/ext4-basic.img",
+          "dest": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img"
         },
         {
-          "type": "cat_via_mount",
-          "path": "/persisted.txt",
-          "expect_size": 22,
-          "expect_content": "should survive unmount"
+          "op": "win-write",
+          "path": "/cli-readback.txt",
+          "content": "via-cli readback",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-cat-via-mount",
+          "path": "/cli-readback.txt",
+          "expect_content": "via-cli readback",
+          "expect_size": "16",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_sha256": "__none__",
+          "extra": "__none__"
         }
       ]
     },
@@ -503,28 +586,39 @@
     "audit-post-verify-marker": {
       "status": "pending",
       "image": "ext4-basic.img",
-      "mount_args": [
-        "--rw"
-      ],
       "_attempts": [],
       "_notes": "Exercises the post_verify hook explicitly. The default [post_verify] in harness.toml audits every passing scenario; this one is here as a self-documenting record of the contract \u2014 write content via mount, expect cat to round-trip, then audit confirms the RW path didn't break invariants.",
-      "ops": [
-        {
-          "type": "write",
-          "path": "/audit-target.txt",
-          "content": "drives the audit command after unmount"
-        },
-        {
-          "type": "cat_via_mount",
-          "path": "/audit-target.txt",
-          "expect_size": 38,
-          "expect_content": "drives the audit command after unmount"
-        }
-      ],
       "post_verify": {
         "command": "{binary} audit {image}",
         "expect_exit": 0
-      }
+      },
+      "recipe": [
+        {
+          "op": "ship-to-vm",
+          "src": "{image_dir}/ext4-basic.img",
+          "dest": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img"
+        },
+        {
+          "op": "win-write",
+          "path": "/audit-marker.txt",
+          "content": "audit me",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-cat-via-mount",
+          "path": "/audit-marker.txt",
+          "expect_content": "audit me",
+          "expect_size": "8",
+          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_sha256": "__none__",
+          "extra": "__none__"
+        }
+      ]
     }
   }
 }

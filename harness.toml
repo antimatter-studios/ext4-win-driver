@@ -105,6 +105,69 @@ host = "host"
 command = "bash scripts/verify-info.sh {image_dir}/{scenario.image} {step.expect_args}"
 expect_exit = 0
 
+# ============================================================
+# Win-side (vm) ops — Phase B
+# ============================================================
+#
+# Each vm-side op script is SELF-CONTAINED: it mounts via -BinaryCmd,
+# does the op, unmounts. This is necessary because the v2 dispatcher
+# uses one SSH session per step and user-mode mount processes (WinFsp
+# + an FS driver binary) die when the spawning SSH session ends —
+# cross-step persistent mounts don't survive without serious detach
+# plumbing. Self-contained ops trade per-step mount overhead for
+# reliability + zero cross-step state.
+#
+# Common args every op takes:
+#   -BinaryCmd   "<vm-side path to driver> mount <img> --drive <X>: [<flags>]"
+#   -ReadyLine   regex; "ext4 mounted at" for ext4-win-driver
+#   -Drive       drive letter (single char, no colon)
+#
+# Per-op args (Path, Content, From/To, ExpectContent/Size/Sha256, etc.)
+# are scenario-specific.
+#
+# Each consumer customises just the BinaryCmd template + ReadyLine in
+# its op-defs; the scripts themselves live in fs-test-harness/scripts/win/
+# and are filesystem-agnostic.
+
+# Shared mount template — every vm-side op-def reuses this BinaryCmd
+# shape. ext4-specific bits (binary path, ready-line) are baked in.
+# Recipe steps fill {step.image_path}, {step.drive}, {step.rw_flag?}.
+
+[ops.win-write]
+host = "vm"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-write.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {step.image_path} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}' -Content '{step.content?}'"
+expect_exit = 0
+
+[ops.win-mkdir]
+host = "vm"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-mkdir.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {step.image_path} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}'"
+expect_exit = 0
+
+[ops.win-cat-via-mount]
+host = "vm"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-cat-via-mount.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {step.image_path} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}' -ExpectContent '{step.expect_content?}' -ExpectSize '{step.expect_size?}' -ExpectSha256 '{step.expect_sha256?}'"
+expect_exit = 0
+
+[ops.win-ls-via-mount]
+host = "vm"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-ls-via-mount.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {step.image_path} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}' -ExpectNames '{step.expect_names_csv?}' -ExpectCount '{step.expect_count?}'"
+expect_exit = 0
+
+[ops.win-rename]
+host = "vm"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-rename.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {step.image_path} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -From '{step.from}' -To '{step.to}'"
+expect_exit = 0
+
+[ops.win-unlink]
+host = "vm"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-unlink.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {step.image_path} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}'"
+expect_exit = 0
+
+[ops.win-rmdir]
+host = "vm"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-rmdir.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {step.image_path} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}'"
+expect_exit = 0
+
 [mount]
 # WinFsp mount, foreground. The runner kills the background process on
 # scenario teardown; ready_line tells the harness when to start running
