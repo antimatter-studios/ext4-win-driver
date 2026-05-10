@@ -11,10 +11,20 @@ binary      = "target/release/ext4.exe"
 matrix_path = "test-matrix.json"
 
 [vm]
-host           = "chris@192.168.213.145"
-ssh_key        = "../diskjockey/vendor/rust-fs-ntfs/privatekey"
-workdir        = "C:/Users/chris/dev/ext4-work"
-image_dir      = "vendor/rust-fs-ext4/test-disks"
+# Per-machine values (host / ssh_key / workdir / image_dir) come from
+# the contributor's .test-env (gitignored), not this committed file.
+# run-tests.sh sources .test-env, exports VM_HOST / VM_WORKDIR /
+# SSH_KEY / VM_IMAGE_DIR, and the runner's per-step ssh + scp prefer
+# those env vars over anything declared here. First-run bootstrap
+# prompts for them when .test-env is missing.
+#
+# The fields below are left empty (rather than hard-coded to the
+# maintainer's setup) so that no committed value masquerades as a
+# working default for other contributors.
+host           = ""
+ssh_key        = ""
+workdir        = ""
+image_dir      = ""
 rust_toolchain = "stable-aarch64-pc-windows-gnullvm"
 # winfsp + LLVM-MinGW + LLVM (libclang) are prerequisites; see README's
 # "WinFsp build prerequisites" section. setup-windows-vm.ps1 handles
@@ -33,15 +43,15 @@ env_prefix = "$env:LIBCLANG_PATH = 'C:\\Program Files\\LLVM\\bin';"
 # fsck = "fsck.ext4 -fn"
 
 [run]
-# Host-side image dir for v2-mode (Mac-orchestrator) op-defs. The
-# canonical test images are produced by `build-test-disks.sh` in the
-# rust-fs-ext4 sibling project — they're build artefacts, not tracked
-# in git, so the vendored vendor/rust-fs-ext4/test-disks/ is empty.
-# Pointing here lets v2 ops resolve `{image_dir}/{scenario.image}` to
-# the real images without the user setting HARNESS_IMAGE_DIR each run.
-# The v1 ship-and-run-on-VM path keeps using [vm].image_dir below
-# (relative to consumer_root, shipped to the VM by the orchestrator).
-image_dir = "../rust-fs-ext4/test-disks"
+# Host-side image dir for v2 op-defs. The canonical test images are
+# build artefacts produced by `build-test-disks.sh` in the rust-fs-ext4
+# sibling project — they're not tracked in git, so the vendored
+# vendor/rust-fs-ext4/test-disks/ is empty. Each contributor picks
+# their own location and exports HARNESS_IMAGE_DIR (or sets
+# VM_IMAGE_DIR in .test-env) — that env var wins over this default.
+# Left empty in committed config so no maintainer-specific path
+# ships as a fake default.
+image_dir = ""
 
 [ops]
 # v1 ops (bare command string -> implicit `host = "vm"`). Consumed by
@@ -131,41 +141,41 @@ expect_exit = 0
 
 # Shared mount template — every vm-side op-def reuses this BinaryCmd
 # shape. ext4-specific bits (binary path, ready-line) are baked in.
-# Recipe steps fill {step.image_path}, {step.drive}, {step.rw_flag?}.
+# Recipe steps fill {vm.workdir}/{scenario.image}, {step.drive}, {step.rw_flag?}.
 
 [ops.win-write]
 host = "vm"
-command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-write.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {step.image_path} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}' -Content '{step.content?}'"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-write.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}' -Content '{step.content?}'"
 expect_exit = 0
 
 [ops.win-mkdir]
 host = "vm"
-command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-mkdir.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {step.image_path} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}'"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-mkdir.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}'"
 expect_exit = 0
 
 [ops.win-cat-via-mount]
 host = "vm"
-command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-cat-via-mount.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {step.image_path} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}' -ExpectContent '{step.expect_content?}' -ExpectSize '{step.expect_size?}' -ExpectSha256 '{step.expect_sha256?}'"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-cat-via-mount.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}' -ExpectContent '{step.expect_content?}' -ExpectSize '{step.expect_size?}' -ExpectSha256 '{step.expect_sha256?}'"
 expect_exit = 0
 
 [ops.win-ls-via-mount]
 host = "vm"
-command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-ls-via-mount.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {step.image_path} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}' -ExpectNames '{step.expect_names_csv?}' -ExpectCount '{step.expect_count?}'"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-ls-via-mount.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}' -ExpectNames '{step.expect_names_csv?}' -ExpectCount '{step.expect_count?}'"
 expect_exit = 0
 
 [ops.win-rename]
 host = "vm"
-command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-rename.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {step.image_path} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -From '{step.from}' -To '{step.to}'"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-rename.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -From '{step.from}' -To '{step.to}'"
 expect_exit = 0
 
 [ops.win-unlink]
 host = "vm"
-command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-unlink.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {step.image_path} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}'"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-unlink.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}'"
 expect_exit = 0
 
 [ops.win-rmdir]
 host = "vm"
-command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-rmdir.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {step.image_path} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}'"
+command = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{vm.harness_root}/scripts/win/win-rmdir.ps1' -BinaryCmd '{vm.workdir}/target/release/ext4.exe mount {vm.workdir}/{scenario.image} --drive {step.drive}: {step.rw_flag?} {step.extra?}' -ReadyLine 'ext4 mounted at' -Drive '{step.drive}' -Path '{step.path}'"
 expect_exit = 0
 
 [mount]

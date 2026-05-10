@@ -1,5 +1,5 @@
 {
-  "_format": "v2-full-migration-pending-validation",
+  "_format": "v2",
   "_doc": "ext4-win-driver matrix work list. See docs/test-harness.md. Each scenario name is unique. status starts at 'pending'; agents transition via scripts/claim-scenario.sh. Schema per scenario: image (file under EXT4_TEST_DISKS), mount_args (extra argv after `mount <image> --drive X:`), operations[] (typed verb list, see run-scenario.ps1), post_verify (optional 'fsck-ext4-strict' hook). Hashes captured from ext4 CLI on macOS against the canonical test images at /Volumes/sdcard256gb/projects/rust-fs-ext4/test-disks/.",
   "scenarios": {
     "basic-ro-list": {
@@ -11,12 +11,12 @@
         {
           "op": "verify-ls",
           "path": "/",
-          "expect_args": "--expect-name . --expect-name .. --expect-name link.txt --expect-name lost+found --expect-name subdir --expect-name test.txt"
+          "expect_args": "'--expect-name' '.' '--expect-name' '..' '--expect-name' 'link.txt' '--expect-name' 'lost+found' '--expect-name' 'subdir' '--expect-name' 'test.txt'"
         },
         {
           "op": "verify-ls",
           "path": "/subdir",
-          "expect_args": "--expect-name . --expect-name .. --expect-name nested.txt"
+          "expect_args": "'--expect-name' '.' '--expect-name' '..' '--expect-name' 'nested.txt'"
         }
       ]
     },
@@ -34,7 +34,7 @@
         {
           "op": "verify-cat",
           "path": "/test.txt",
-          "expect_args": "'--expect-size' '16' '--expect-sha256' '8ce9a8091ad255e6be4b7e9a48f324aea35eb6d9e552628cc139598d97779dee' '--expect-content' 'hello from ext4\n'"
+          "expect_args": "'--expect-size' '16' '--expect-sha256' '8ce9a8091ad255e6be4b7e9a48f324aea35eb6d9e552628cc139598d97779dee'"
         },
         {
           "op": "verify-cat",
@@ -52,13 +52,13 @@
         {
           "op": "ship-to-vm",
           "src": "{image_dir}/ext4-basic.img",
-          "dest": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img"
+          "dest": "{vm.workdir}/ext4-basic.img"
         },
         {
           "op": "win-write",
           "path": "/new.txt",
           "content": "hello from windows",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "extra": "__none__"
@@ -68,7 +68,7 @@
           "path": "/new.txt",
           "expect_content": "hello from windows",
           "expect_size": "18",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "expect_sha256": "__none__",
@@ -85,12 +85,12 @@
         {
           "op": "ship-to-vm",
           "src": "{image_dir}/ext4-basic.img",
-          "dest": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img"
+          "dest": "{vm.workdir}/ext4-basic.img"
         },
         {
           "op": "win-mkdir",
           "path": "/freshdir",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "extra": "__none__"
@@ -99,7 +99,7 @@
           "op": "win-write",
           "path": "/freshdir/inside.txt",
           "content": "nested write",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "extra": "__none__"
@@ -108,7 +108,7 @@
           "op": "win-ls-via-mount",
           "path": "/freshdir",
           "expect_names_csv": ".,..,inside.txt",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "expect_count": "__none__",
@@ -119,7 +119,7 @@
           "path": "/freshdir/inside.txt",
           "expect_content": "nested write",
           "expect_size": "12",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "expect_sha256": "__none__",
@@ -384,13 +384,13 @@
         {
           "op": "ship-to-vm",
           "src": "{image_dir}/ext4-basic.img",
-          "dest": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img"
+          "dest": "{vm.workdir}/ext4-basic.img"
         },
         {
           "op": "win-write",
           "path": "/before.txt",
           "content": "rename me",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "extra": "__none__"
@@ -399,7 +399,7 @@
           "op": "win-rename",
           "from": "/before.txt",
           "to": "/after.txt",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "extra": "__none__"
@@ -409,7 +409,7 @@
           "path": "/after.txt",
           "expect_content": "rename me",
           "expect_size": "9",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "expect_sha256": "__none__",
@@ -433,12 +433,12 @@
         {
           "op": "ship-to-vm",
           "src": "{image_dir}/ext4-basic.img",
-          "dest": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img"
+          "dest": "{vm.workdir}/ext4-basic.img"
         },
         {
           "op": "win-mkdir",
           "path": "/scratch-dir",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "extra": "__none__"
@@ -446,7 +446,7 @@
         {
           "op": "win-rmdir",
           "path": "/scratch-dir",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "extra": "__none__"
@@ -455,7 +455,7 @@
           "op": "win-ls-via-mount",
           "path": "/",
           "expect_names_csv": ".,..,link.txt,lost+found,subdir,test.txt",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "expect_count": "__none__",
@@ -472,13 +472,13 @@
         {
           "op": "ship-to-vm",
           "src": "{image_dir}/ext4-basic.img",
-          "dest": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img"
+          "dest": "{vm.workdir}/ext4-basic.img"
         },
         {
           "op": "win-write",
           "path": "/test.txt",
           "content": "OVERWRITE",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "extra": "__none__"
@@ -488,7 +488,7 @@
           "path": "/test.txt",
           "expect_content": "OVERWRITE",
           "expect_size": "9",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "expect_sha256": "__none__",
@@ -505,13 +505,13 @@
         {
           "op": "ship-to-vm",
           "src": "{image_dir}/ext4-basic.img",
-          "dest": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img"
+          "dest": "{vm.workdir}/ext4-basic.img"
         },
         {
           "op": "win-write",
           "path": "/condemned.txt",
           "content": "soon-to-be-removed",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "extra": "__none__"
@@ -519,7 +519,7 @@
         {
           "op": "win-unlink",
           "path": "/condemned.txt",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "extra": "__none__"
@@ -528,7 +528,7 @@
           "op": "win-ls-via-mount",
           "path": "/",
           "expect_names_csv": ".,..,link.txt,lost+found,subdir,test.txt",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "expect_count": "__none__",
@@ -545,13 +545,13 @@
         {
           "op": "ship-to-vm",
           "src": "{image_dir}/ext4-basic.img",
-          "dest": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img"
+          "dest": "{vm.workdir}/ext4-basic.img"
         },
         {
           "op": "win-write",
           "path": "/cli-readback.txt",
           "content": "via-cli readback",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "extra": "__none__"
@@ -561,7 +561,7 @@
           "path": "/cli-readback.txt",
           "expect_content": "via-cli readback",
           "expect_size": "16",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "expect_sha256": "__none__",
@@ -596,13 +596,13 @@
         {
           "op": "ship-to-vm",
           "src": "{image_dir}/ext4-basic.img",
-          "dest": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img"
+          "dest": "{vm.workdir}/ext4-basic.img"
         },
         {
           "op": "win-write",
           "path": "/audit-marker.txt",
           "content": "audit me",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "extra": "__none__"
@@ -612,7 +612,7 @@
           "path": "/audit-marker.txt",
           "expect_content": "audit me",
           "expect_size": "8",
-          "image_path": "C:/Users/chris/dev/ext4-work/test-disks/ext4-basic.img",
+          "image_path": "{vm.workdir}/ext4-basic.img",
           "drive": "Z",
           "rw_flag": "--rw",
           "expect_sha256": "__none__",
