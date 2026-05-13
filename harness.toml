@@ -27,11 +27,14 @@ workdir        = ""
 image_dir      = ""
 rust_toolchain = "stable-aarch64-pc-windows-gnullvm"
 # winfsp + LLVM-MinGW + LLVM (libclang) are prerequisites; see README's
-# "WinFsp build prerequisites" section. setup-windows-vm.ps1 handles
-# the rustup pieces; the user installs WinFsp + LLVM via winget once.
+# "WinFsp build prerequisites" section. setup-windows-vm.ps1 installs
+# everything below via winget. WinFsp's default install is runtime-only
+# — bindgen against winfsp.h needs ADDLOCAL=F.Core,F.Developer for
+# headers + .lib, passed through via winget --override (harness v3.5.0+).
 packages = [
     "MartinStorsjo.LLVM-MinGW.UCRT",
     "LLVM.LLVM",
+    { id = "WinFsp.WinFsp", custom_args = "ADDLOCAL=F.Core,F.Developer" },
 ]
 # bindgen needs libclang to parse winfsp.h.
 env_prefix = "$env:LIBCLANG_PATH = 'C:\\Program Files\\LLVM\\bin';"

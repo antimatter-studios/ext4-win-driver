@@ -30,7 +30,11 @@ impl FsBackend for Ext4Backend {
 }
 
 #[derive(Parser)]
-#[command(name = "ext4", about = "Browse and (eventually) mount ext4 volumes on Windows")]
+#[command(
+    name = "ext4",
+    about = "Browse and (eventually) mount ext4 volumes on Windows",
+    version,
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
