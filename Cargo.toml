@@ -1,6 +1,6 @@
 [package]
 name = "ext4-win-driver"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 # GPL-3.0 because the WinFsp Rust bindings (`winfsp` crate) are GPL-3.0.
 # The CLI alone (without the `mount` feature) does not link winfsp and
@@ -53,7 +53,17 @@ ctrlc = "3"
 # at SnowflakePowered/winfsp-rs. The patch lifts winfsp-sys/build.rs's
 # MSVC-only gate so the same MSVC-format .lib (consumed via lld-link)
 # works for *-pc-windows-gnullvm Rust toolchains too.
-winfsp = { path = "vendor/winfsp-rs/winfsp", features = ["delayload", "system"], optional = true, default-features = false }
+#
+# Deliberately NOT enabling winfsp-sys's `system` feature. That would
+# point bindgen at the registry-discovered system install
+# (C:\Program Files (x86)\WinFsp\inc) instead of the vendored
+# winfsp-sys/winfsp/inc tree -- and the CI's _ReadWriteBarrier patch
+# step (release.yml) only touches the vendored copy. Keeping the
+# vendored path means CI patches what bindgen actually reads, and we
+# pin the exact header version we tested against rather than tracking
+# whatever choco's winfsp package ships this week. Runtime behaviour
+# is identical either way (both link via delayload of winfsp-x64.dll).
+winfsp = { path = "vendor/winfsp-rs/winfsp", features = ["delayload"], optional = true, default-features = false }
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
