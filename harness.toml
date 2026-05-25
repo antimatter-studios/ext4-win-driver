@@ -5,6 +5,13 @@
 # https://github.com/antimatter-studios/fs-test-harness. Run
 # `git submodule update --init --recursive` after cloning.
 
+[runner]
+# WinFsp mounts are serialised: the WinFsp host object is a per-process
+# singleton and cannot be shared across concurrent mount operations.
+# max_parallel = 1 enforces sequential execution (replaces the old
+# serialize_mounts = true).
+max_parallel = 1
+
 [project]
 name        = "ext4-win-driver"
 binary      = "target/release/ext4.exe"
