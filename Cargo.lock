@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "am-fs-core"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "anstream"
@@ -246,7 +246,7 @@ dependencies = [
 
 [[package]]
 name = "fs-ext4"
-version = "0.1.4"
+version = "0.2.1"
 dependencies = [
  "am-fs-core",
  "bitflags",
