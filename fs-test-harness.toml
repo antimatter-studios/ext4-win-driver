@@ -18,20 +18,21 @@ binary      = "target/release/ext4.exe"
 matrix_path = "test-matrix.json"
 
 [vm]
-# Per-machine values (host / ssh_key / workdir / image_dir) come from
-# the contributor's .test-env (gitignored), not this committed file.
-# run-tests.sh sources .test-env, exports VM_HOST / VM_WORKDIR /
-# SSH_KEY / VM_IMAGE_DIR, and the runner's per-step ssh + scp prefer
-# those env vars over anything declared here. First-run bootstrap
-# prompts for them when .test-env is missing.
+# Machine-local values (VM address, SSH key, workdir, image dir) are not
+# committed here — set them in the gitignored `.test-env` file instead:
 #
-# The fields below are left empty (rather than hard-coded to the
-# maintainer's setup) so that no committed value masquerades as a
-# working default for other contributors.
-host           = ""
-ssh_key        = ""
-workdir        = ""
-image_dir      = ""
+#   VM_HOST        = user@host
+#   SSH_KEY        = /path/to/private/key
+#   VM_WORKDIR     = C:/path/on/windows/vm
+#   HOST_IMAGE_DIR = /path/for/disk/images  (default: diskimages/)
+#
+# The runner expands `${VAR}` and `${VAR:-default}` references directly
+# from `.test-env`. Run `bash vendor/fs-test-harness/scripts/setup-local.sh`
+# to generate `.test-env` interactively on first setup.
+host           = "${VM_HOST}"
+ssh_key        = "${SSH_KEY}"
+workdir        = "${VM_WORKDIR}"
+image_dir      = "${HOST_IMAGE_DIR:-diskimages}"
 rust_toolchain = "stable-aarch64-pc-windows-gnullvm"
 # winfsp + LLVM-MinGW + LLVM (libclang) are prerequisites; see README's
 # "WinFsp build prerequisites" section. setup-windows-vm.ps1 installs
@@ -56,12 +57,9 @@ env_prefix = "$env:LIBCLANG_PATH = 'C:\\Program Files\\LLVM\\bin';"
 # Host-side image dir for v2 op-defs. The canonical test images are
 # build artefacts produced by `build-test-disks.sh` in the rust-fs-ext4
 # sibling project — they're not tracked in git, so the vendored
-# vendor/rust-fs-ext4/test-disks/ is empty. Each contributor picks
-# their own location and exports HARNESS_IMAGE_DIR (or sets
-# VM_IMAGE_DIR in .test-env) — that env var wins over this default.
-# Left empty in committed config so no maintainer-specific path
-# ships as a fake default.
-image_dir = ""
+# vendor/rust-fs-ext4/test-disks/ is empty. Set HOST_IMAGE_DIR in
+# .test-env to point at your local copy; defaults to diskimages/.
+image_dir = "${HOST_IMAGE_DIR:-diskimages}"
 
 [ops]
 # v1 ops (bare command string -> implicit `host = "vm"`). Consumed by
