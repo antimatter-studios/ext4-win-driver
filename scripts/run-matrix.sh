@@ -43,6 +43,7 @@ cd "$repo_root" || {
 ssh_mux_socket="/tmp/ext4-ssh-mux-$$"
 ssh_wrapper_dir=""
 ssh_mux_pid=""
+builder_vm_pid=""
 
 # Allow `--keep-images` to opt out of cleanup. Strip it before
 # forwarding so the harness runner doesn't see an unknown flag.
@@ -143,6 +144,54 @@ stop_ssh_mux() {
     [[ -n "${ssh_wrapper_dir:-}" ]] && rm -rf "$ssh_wrapper_dir"
 }
 
+# ── ext4 builder VM ─────────────────────────────────────────────────────────
+# Mirrors the ntfs pattern: ntfs formats images on-demand using the Mac's
+# own binary; ext4 needs Linux so we keep an Alpine VM running for the
+# duration of the matrix run. Each recipe's `build-ext4-image` op SSHes
+# into this VM to create + format + populate one image.
+start_builder_vm() {
+    local builder_script="$repo_root/vendor/rust-fs-ext4/test-disks/build-ext4-feature-images.sh"
+    [[ ! -f "$builder_script" ]] && {
+        echo "[run-matrix] builder VM: script not found at $builder_script" >&2
+        return 1
+    }
+    echo "[run-matrix] builder VM: starting..." >&2
+    bash "$builder_script" --server
+    # Source connection details written by the script.
+    local env_file="$repo_root/vendor/rust-fs-ext4/test-disks/.vm-cache/server.env"
+    if [[ ! -f "$env_file" ]]; then
+        echo "[run-matrix] builder VM: server.env not written — startup failed" >&2
+        return 1
+    fi
+    # shellcheck disable=SC1090
+    source "$env_file"
+    builder_vm_pid="${EXT4_BUILDER_PID:-}"
+    # Export so the harness can expand ${EXT4_BUILDER_PORT} and
+    # ${EXT4_BUILDER_KEY} in op commands via its .test-env expansion.
+    export EXT4_BUILDER_PORT EXT4_BUILDER_KEY EXT4_BUILDER_PID
+    echo "[run-matrix] builder VM: ready (pid=${builder_vm_pid} port=${EXT4_BUILDER_PORT})" >&2
+}
+
+stop_builder_vm() {
+    [[ -z "${builder_vm_pid:-}" ]] && return 0
+    echo "[run-matrix] builder VM: shutting down (pid=${builder_vm_pid})..." >&2
+    # Ask Alpine to power off gracefully; fall back to kill.
+    ssh \
+        -p "${EXT4_BUILDER_PORT:-2222}" \
+        -i "${EXT4_BUILDER_KEY:-}" \
+        -o StrictHostKeyChecking=no \
+        -o BatchMode=yes \
+        -o ConnectTimeout=5 \
+        root@localhost "poweroff" 2>/dev/null || true
+    # Give it 5 s then hard-kill qemu.
+    local i
+    for i in 1 2 3 4 5; do
+        kill -0 "$builder_vm_pid" 2>/dev/null || return 0
+        sleep 1
+    done
+    kill "$builder_vm_pid" 2>/dev/null || true
+}
+
 cleanup() {
     if [ "$keep_images" -eq 1 ]; then
         echo "[run-matrix] --keep-images set; leaving images in $host_image_dir" >&2
@@ -166,6 +215,7 @@ cleanup() {
             echo "[run-matrix] cleanup: removed $count image(s) from this run's dir(s)" >&2
         fi
     fi
+    stop_builder_vm
     stop_ssh_mux
     rm -rf "$scenario_lock"
 }
@@ -183,6 +233,9 @@ trap 'exit 131' QUIT  # 128 + SIGQUIT (3)
 # Snapshot existing run_id subdirs so cleanup only removes dirs created by
 # this invocation, not any belonging to a concurrently-running instance.
 pre_run_subdirs=$(find "$host_image_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+
+# Start the ext4 builder VM so recipes can create images on demand.
+start_builder_vm
 
 # Start SSH connection mux before handing off to the harness.
 # The harness opens many separate SSH sessions per scenario; multiplexing
