@@ -51,6 +51,60 @@ fn ftype_str(ft: u8) -> &'static str {
     }
 }
 
+/// Format a POSIX mode integer as an `ls -l`-style string (e.g. `drwxr-xr-x`).
+fn format_mode_str(mode: u16, file_type: &fs_ext4_file_type_t) -> String {
+    let type_char = match file_type {
+        fs_ext4_file_type_t::RegFile => '-',
+        fs_ext4_file_type_t::Dir     => 'd',
+        fs_ext4_file_type_t::Symlink => 'l',
+        fs_ext4_file_type_t::ChrDev  => 'c',
+        fs_ext4_file_type_t::BlkDev  => 'b',
+        fs_ext4_file_type_t::Fifo    => 'p',
+        fs_ext4_file_type_t::Sock    => 's',
+        _                            => '?',
+    };
+    let setuid = mode & 0o4000 != 0;
+    let setgid = mode & 0o2000 != 0;
+    let sticky = mode & 0o1000 != 0;
+    let bit = |mask: u16, c: char, alt: char| if mode & mask != 0 { c } else { alt };
+    format!(
+        "{}{}{}{}{}{}{}{}{}{}", type_char,
+        bit(0o400, 'r', '-'), bit(0o200, 'w', '-'),
+        if setuid { if mode & 0o100 != 0 { 's' } else { 'S' } } else { bit(0o100, 'x', '-') },
+        bit(0o040, 'r', '-'), bit(0o020, 'w', '-'),
+        if setgid { if mode & 0o010 != 0 { 's' } else { 'S' } } else { bit(0o010, 'x', '-') },
+        bit(0o004, 'r', '-'), bit(0o002, 'w', '-'),
+        if sticky { if mode & 0o001 != 0 { 't' } else { 'T' } } else { bit(0o001, 'x', '-') },
+    )
+}
+
+/// Format a Unix timestamp (seconds since epoch) as a compact UTC string.
+fn format_unix_time(secs: u32) -> String {
+    // Days from epoch; compute year/month/day via the proleptic Gregorian calendar.
+    let s = secs as u64;
+    let (sec, s) = (s % 60, s / 60);
+    let (min, s) = (s % 60, s / 60);
+    let (hour, mut days) = (s % 24, s / 24);
+    // Algorithm: days since 1970-01-01
+    let mut year = 1970u32;
+    loop {
+        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+        let dy = if leap { 366 } else { 365 };
+        if days < dy { break; }
+        days -= dy;
+        year += 1;
+    }
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let months = [31u64, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut month = 1u32;
+    for m in &months {
+        if days < *m { break; }
+        days -= m;
+        month += 1;
+    }
+    format!("{year:04}-{month:02}-{:02}T{hour:02}:{min:02}:{sec:02}Z", days + 1)
+}
+
 fn format_uuid(u: &[u8; 16]) -> String {
     format!(
         "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
@@ -226,17 +280,18 @@ pub fn stat(mt: &MountArgs, path: &str) -> Result<()> {
     if r != 0 {
         bail!("stat({path:?}) failed: {}", last_err());
     }
+    let mode_str = format_mode_str(attr.mode, &attr.file_type);
     println!("path:        {path}");
     println!("inode:       {}", attr.inode);
     println!("size:        {}", attr.size);
-    println!("mode:        0o{:o}", attr.mode);
+    println!("mode:        {mode_str}  (0o{:o})", attr.mode & 0o7777);
     println!("uid/gid:     {}/{}", attr.uid, attr.gid);
     println!("link_count:  {}", attr.link_count);
-    println!("atime:       {}", attr.atime);
-    println!("mtime:       {}", attr.mtime);
-    println!("ctime:       {}", attr.ctime);
-    println!("crtime:      {}", attr.crtime);
-    println!("file_type:   {:?}", attr.file_type as u32);
+    println!("atime:       {} ({})", attr.atime, format_unix_time(attr.atime));
+    println!("mtime:       {} ({})", attr.mtime, format_unix_time(attr.mtime));
+    println!("ctime:       {} ({})", attr.ctime, format_unix_time(attr.ctime));
+    println!("crtime:      {} ({})", attr.crtime, format_unix_time(attr.crtime));
+    println!("type:        {:?}", attr.file_type);
     Ok(())
 }
 
