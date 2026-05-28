@@ -79,6 +79,11 @@ impl Mount {
         }
     }
 
+    #[cfg(not(all(windows, feature = "mount")))]
+    pub fn open_rw(mt: &MountArgs) -> Result<Self> {
+        Self::open(mt)
+    }
+
     /// RW analogue of [`open_direct`] — uses `fs_ext4_mount_rw` against the
     /// device path. Available so `--rw` works without a `--part`.
     #[cfg(all(windows, feature = "mount"))]
@@ -445,7 +450,10 @@ mod winfsp_adapter {
             if let Ok(cn) = CString::new(&buffer[name_start..name_end]) {
                 let value = &buffer[val_start..val_end];
                 if val_len == 0 {
-                    unsafe { fs_ext4_removexattr(fs, cp.as_ptr(), cn.as_ptr()) };
+                    let rc = unsafe { fs_ext4_removexattr(fs, cp.as_ptr(), cn.as_ptr()) };
+                    if rc != 0 {
+                        return Err(errno_to_status(unsafe { fs_ext4_last_errno() }).into());
+                    }
                 } else {
                     let rc = unsafe {
                         fs_ext4_setxattr(
@@ -730,6 +738,15 @@ mod winfsp_adapter {
             let path = context.unix_path();
             let attr = stat_path(self.mount.fs, &path)?;
             populate_file_info(&attr, file_info);
+            // Probe xattr presence so Windows issues QueryEa when EAs exist.
+            if let Ok(cp) = CString::new(path.as_str()) {
+                let n = unsafe {
+                    fs_ext4_listxattr(self.mount.fs, cp.as_ptr(), std::ptr::null_mut(), 0)
+                };
+                if n > 0 {
+                    file_info.ea_size = n as u32;
+                }
+            }
             *context.size.lock().unwrap() = attr.size;
             *context.attr.lock().unwrap() = attr;
             Ok(())

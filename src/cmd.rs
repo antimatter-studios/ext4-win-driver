@@ -742,12 +742,15 @@ pub fn write_file(mt: &MountArgs, path: &str) -> Result<()> {
                 m.fs,
                 cp.as_ptr(),
                 data.as_ptr() as *const c_void,
-                data.len(),
+                data.len() as u64,
                 0,
             )
         };
         if written < 0 {
             bail!("pwrite({path:?}) failed: {}", last_err());
+        }
+        if written < data.len() as i64 {
+            bail!("pwrite({path:?}): short write ({written} < {})", data.len());
         }
     }
     Ok(())
@@ -801,7 +804,7 @@ pub fn mknod(mt: &MountArgs, path: &str, mode: u16, major: u32, minor: u32) -> R
     let m = Mount::open_rw(mt)?;
     let cp = CString::new(path).context("path contains NUL byte")?;
     let rc = unsafe { fs_ext4_mknod(m.fs, cp.as_ptr(), mode, major, minor) };
-    if rc == 0 {
+    if rc != 0 {
         bail!("mknod({path:?}, mode=0o{mode:o}, {major}:{minor}) failed: {}", last_err());
     }
     Ok(())
