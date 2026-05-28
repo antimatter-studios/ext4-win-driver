@@ -444,18 +444,44 @@ mod winfsp_adapter {
         info.ea_size = 0;
     }
 
-    /// Stat a path through the C ABI. Returns the populated `attr` or a
-    /// `FspError`-mappable error.
-    fn stat_path(fs: *mut fs_ext4_fs_t, unix_path: &str) -> FspResult<fs_ext4_attr_t> {
-        let cp = CString::new(unix_path)
-            .map_err(|_| windows::core::Error::from(STATUS_OBJECT_NAME_NOT_FOUND))?;
-        let mut attr: fs_ext4_attr_t = unsafe { std::mem::zeroed() };
-        let r = unsafe { fs_ext4_stat(fs, cp.as_ptr(), &mut attr) };
-        if r != 0 {
-            let errno = unsafe { fs_ext4_last_errno() };
-            return Err(errno_to_status(errno).into());
+    /// Stat a path through the C ABI. Returns the resolved path and populated
+    /// `attr`, following symlinks up to 8 levels deep.
+    fn stat_path_resolved(fs: *mut fs_ext4_fs_t, unix_path: &str) -> FspResult<(String, fs_ext4_attr_t)> {
+        let mut current = unix_path.to_owned();
+        for _ in 0..8 {
+            let cp = CString::new(current.as_str())
+                .map_err(|_| windows::core::Error::from(STATUS_OBJECT_NAME_NOT_FOUND))?;
+            let mut attr: fs_ext4_attr_t = unsafe { std::mem::zeroed() };
+            let r = unsafe { fs_ext4_stat(fs, cp.as_ptr(), &mut attr) };
+            if r != 0 {
+                let errno = unsafe { fs_ext4_last_errno() };
+                return Err(errno_to_status(errno).into());
+            }
+            if !matches!(attr.file_type, fs_ext4_file_type_t::Symlink) {
+                return Ok((current, attr));
+            }
+            // Symlink: read target (null-terminated); resolve relative to link's parent.
+            let mut buf = vec![0u8; 4096];
+            let r = unsafe { fs_ext4_readlink(fs, cp.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) };
+            if r < 0 {
+                return Err(STATUS_OBJECT_NAME_NOT_FOUND.into());
+            }
+            let nul = buf.iter().position(|&b| b == 0).unwrap_or(0);
+            let target = std::str::from_utf8(&buf[..nul]).unwrap_or("").to_owned();
+            if target.starts_with('/') {
+                current = target;
+            } else {
+                let parent = current.rfind('/').map(|i| &current[..i]).unwrap_or("/");
+                current = format!("{}/{}", parent.trim_end_matches('/'), target);
+            }
         }
-        Ok(attr)
+        Err(STATUS_OBJECT_NAME_NOT_FOUND.into())
+    }
+
+    /// Stat a path through the C ABI. Returns the populated `attr` or a
+    /// `FspError`-mappable error. Follows symlinks (up to 8 levels).
+    fn stat_path(fs: *mut fs_ext4_fs_t, unix_path: &str) -> FspResult<fs_ext4_attr_t> {
+        stat_path_resolved(fs, unix_path).map(|(_, attr)| attr)
     }
 
     /// Errno values use **macOS POSIX numbers** because that's what the
@@ -615,13 +641,15 @@ mod winfsp_adapter {
             _granted_access: FILE_ACCESS_RIGHTS,
             file_info: &mut OpenFileInfo,
         ) -> FspResult<Self::FileContext> {
-            let unix_path =
+            let initial_path =
                 winpath_to_unix(file_name).map_err(|_| STATUS_OBJECT_NAME_NOT_FOUND)?;
-            let attr = stat_path(self.mount.fs, &unix_path)?;
+            // Follow symlinks so the context records the resolved path; reads and
+            // writes then operate on the actual file inode, not the symlink inode.
+            let (resolved_path, attr) = stat_path_resolved(self.mount.fs, &initial_path)?;
             populate_file_info(&attr, file_info.as_mut());
             Ok(Ext4FileContext {
                 inode: attr.inode,
-                unix_path: Mutex::new(unix_path),
+                unix_path: Mutex::new(resolved_path),
                 is_dir: matches!(attr.file_type, fs_ext4_file_type_t::Dir),
                 size: Mutex::new(attr.size),
                 attr: Mutex::new(attr),

@@ -799,6 +799,34 @@
       ],
       "image_type": "basic"
     },
+    "ro-symlink-read-via-mount": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "_attempts": [],
+      "_notes": "link.txt is a symlink to test.txt. Verifies WinFsp follows the symlink transparently: ReadAllBytes via the mount should return test.txt content (16 bytes, same sha256).",
+      "recipe": [
+        {
+          "op": "build-ext4-image"
+        },
+        {
+          "op": "ship-to-vm",
+          "src": "{image_dir}/{run_id}/ext4-basic.img",
+          "dest": "{vm.workdir}/ext4-basic.img"
+        },
+        {
+          "op": "win-cat-via-mount",
+          "path": "/link.txt",
+          "expect_content": "hello from ext4\n",
+          "expect_size": "16",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_sha256": "8ce9a8091ad255e6be4b7e9a48f324aea35eb6d9e552628cc139598d97779dee",
+          "extra": "__none__"
+        }
+      ],
+      "image_type": "basic"
+    },
     "watch-volume-arrival-marker": {
       "status": "blocked-needs-event-injection-harness",
       "image": "",
