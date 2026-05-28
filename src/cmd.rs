@@ -354,10 +354,8 @@ fn walk(m: &Mount, dir: &str, depth: u32, max_depth: u32) -> Result<()> {
     unsafe { fs_ext4_dir_close(iter) };
 
     let prefix = "  ".repeat(depth as usize + 1);
-    for (ino, ft, name) in &entries {
-        println!("{prefix}{:>10} {} {}", ino, ftype_str(*ft), name);
-    }
-    for (_, ft, name) in entries {
+    for (ino, ft, name) in entries {
+        println!("{prefix}{:>10} {} {}", ino, ftype_str(ft), name);
         if ft == 2 {
             let child = if dir.ends_with('/') {
                 format!("{dir}{name}")

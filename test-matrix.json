@@ -325,7 +325,7 @@
         },
         {
           "op": "verify-tree",
-          "expect_args": "'--expect-stdout-sha256' '5cec65ca5ab421cabac1a37a17bbead0df7093f94e8c83eebaa51dcac64218a2'"
+          "expect_args": "'--expect-stdout-sha256' '7d47e62f6c644ddae5f0aa02297f4e6aa8368c03889c300a53ffa3459d00aed9'"
         }
       ],
       "image_type": "basic"
