@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+# Build an ext4 image for a named scenario and mount it on the Windows
+# VM via WinFsp, leaving it live for manual exploration in Explorer/CMD.
+#
+# Usage: bash scripts/test-mount <scenario> [mount-flags…]
+#   scenario    : name from test-matrix.json  (e.g. basic-ro-list)
+#   mount-flags : extra flags forwarded to `ext4 mount` (e.g. --ro, --part 1)
+#
+# Examples:
+#   bash scripts/test-mount basic-ro-list
+#   bash scripts/test-mount basic-ro-list --ro
+#   bash scripts/test-mount whole-disk-with-part --part 1
+#
+# Mount point is a directory on the Windows VM under <workdir>\mnt\<scenario>.
+# Directory mounts use WinFsp reparse points, which are visible across all
+# Windows sessions (unlike drive letters, which are per-logon-session).
+#
+# The SSH session that keeps WinFsp alive is held open in the background.
+# Run `bash scripts/test-unmount` to unmount and clean up.
+
+set -euo pipefail
+
+# ── Args ──────────────────────────────────────────────────────────────────────
+SCENARIO="${1:?usage: bash scripts/test-mount <scenario> [mount-flags…]}"
+shift
+EXTRA_FLAGS=("$@")
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+state_file="$repo_root/.test-mount-state"
+mount_log="/tmp/ext4-test-mount-$$.log"
+
+# ── Guard: stale mount ────────────────────────────────────────────────────────
+if [[ -f "$state_file" ]]; then
+    echo "ERROR: $state_file already exists — run bash scripts/test-unmount first" >&2
+    exit 1
+fi
+
+# ── Load .test-env ────────────────────────────────────────────────────────────
+[[ -f "$repo_root/.test-env" ]] || {
+    echo "ERROR: .test-env not found in $repo_root" >&2; exit 1
+}
+_get() { grep "^$1=" "$repo_root/.test-env" 2>/dev/null | head -1 | cut -d= -f2-; }
+vm_host=$(_get VM_HOST)
+ssh_key=$(_get SSH_KEY)
+vm_workdir=$(_get VM_WORKDIR)
+host_image_dir=$(_get HOST_IMAGE_DIR)
+host_image_dir="${host_image_dir:-diskimages}"
+[[ "$host_image_dir" != /* ]] && host_image_dir="$repo_root/$host_image_dir"
+mkdir -p "$host_image_dir"
+
+[[ -z "$vm_host" ]]    && { echo "ERROR: VM_HOST not set in .test-env"    >&2; exit 1; }
+[[ -z "$vm_workdir" ]] && { echo "ERROR: VM_WORKDIR not set in .test-env" >&2; exit 1; }
+
+key_opts=()
+[[ -n "$ssh_key" && -f "$ssh_key" ]] && key_opts=(-i "$ssh_key" -o IdentitiesOnly=yes)
+
+# ── Resolve scenario ──────────────────────────────────────────────────────────
+result=$(SCENARIO="$SCENARIO" REPO_ROOT="$repo_root" python3 -c "
+import json, sys, os
+root     = os.environ['REPO_ROOT']
+scenario = os.environ['SCENARIO']
+m = json.load(open(f'{root}/test-matrix.json'))
+s = m['scenarios'].get(scenario)
+if not s:
+    print(f\"ERROR: scenario '{scenario}' not found in test-matrix.json\", file=sys.stderr)
+    sys.exit(1)
+if not s.get('image_type') or not s.get('image'):
+    print(f\"ERROR: scenario '{scenario}' has no image_type/image (marker scenario?)\", file=sys.stderr)
+    sys.exit(1)
+print(s['image_type'], s['image'])
+") || exit 1
+read -r image_type image_file <<< "$result"
+
+echo "[test-mount] scenario=$SCENARIO  image_type=$image_type  image=$image_file  flags=${EXTRA_FLAGS[*]+${EXTRA_FLAGS[*]}}"
+
+# ── Ensure Alpine builder VM is running ───────────────────────────────────────
+env_file="$repo_root/vendor/rust-fs-ext4/test-disks/.vm-cache/server.env"
+builder_script="$repo_root/vendor/rust-fs-ext4/test-disks/build-ext4-feature-images.sh"
+
+[[ -f "$builder_script" ]] || {
+    echo "ERROR: builder script not found: $builder_script" >&2
+    echo "       run: git submodule update --init --recursive" >&2
+    exit 1
+}
+
+_start_builder() {
+    echo "[test-mount] builder VM: starting..."
+    bash "$builder_script" --server
+}
+
+if [[ -f "$env_file" ]]; then
+    # shellcheck disable=SC1090
+    source "$env_file"
+    if [[ -n "${EXT4_BUILDER_PID:-}" ]] && kill -0 "$EXT4_BUILDER_PID" 2>/dev/null; then
+        echo "[test-mount] builder VM: already running (pid=$EXT4_BUILDER_PID)"
+    else
+        rm -f "$env_file"
+        echo "[test-mount] builder VM: stale — restarting..."
+        _start_builder
+        # shellcheck disable=SC1090
+        source "$env_file"
+    fi
+else
+    _start_builder
+    # shellcheck disable=SC1090
+    source "$env_file"
+fi
+
+# ── Build image ───────────────────────────────────────────────────────────────
+run_id="$(date +%s%N 2>/dev/null || date +%s)"
+mkdir -p "$host_image_dir/$run_id"
+
+echo "[test-mount] building image ($image_type)..."
+bash "$repo_root/scripts/builder-ssh.sh" \
+    "mkdir -p /host/$run_id && sh /host/_vm-builder.sh /host/$run_id $image_type"
+
+host_image_path="$host_image_dir/$run_id/$image_file"
+[[ -f "$host_image_path" ]] || {
+    echo "ERROR: builder did not produce expected image: $host_image_path" >&2; exit 1
+}
+echo "[test-mount] image built: $host_image_path ($(du -sh "$host_image_path" | cut -f1))"
+
+# ── Upload image to Windows VM ────────────────────────────────────────────────
+# macOS scp (OpenSSH 9+) uses the SFTP subsystem but mishandles absolute
+# Windows paths; use `sftp -b` with a leading "/" so the SFTP server sees
+# the correct path (its root is "/", so /C:/... resolves correctly).
+vm_image_path="$vm_workdir/$image_file"
+echo "[test-mount] copying image to Windows VM ($vm_host)..."
+sftp "${key_opts[@]+"${key_opts[@]}"}" \
+    -o BatchMode=yes \
+    -o ConnectTimeout=15 \
+    -b - "$vm_host" <<EOF
+put $host_image_path /$vm_image_path
+EOF
+echo "[test-mount] VM image: $vm_image_path"
+
+# ── Create mount-point directory on VM ───────────────────────────────────────
+# Use a directory mount rather than a drive letter: WinFsp reparse-point
+# mounts are visible across all Windows sessions; drive letters are
+# per-logon-session and vanish when browsed from a different SSH connection.
+#
+# Use run_id in the path so each invocation gets a fresh name — the WinFsp
+# kernel driver holds stale entries for force-killed mounts, so reusing the
+# same path returns "Object Name already exists" until a reboot.
+vm_mnt_dir="$vm_workdir/mnt/$run_id"
+vm_mnt_dir_win="${vm_mnt_dir//\//\\}"
+echo "[test-mount] creating mount directory on VM: $vm_mnt_dir_win"
+ssh "${key_opts[@]+"${key_opts[@]}"}" \
+    -o BatchMode=yes \
+    -o ConnectTimeout=10 \
+    "$vm_host" \
+    "powershell -NoProfile -NonInteractive -Command \"New-Item -ItemType Directory -Path '$vm_mnt_dir_win' -Force | Out-Null\""
+
+# ── Mount on Windows VM ───────────────────────────────────────────────────────
+# Run ext4.exe mount in the foreground of a background SSH session.
+# nohup + disown detach the SSH job from this script's process group so it
+# survives after the script exits. test-unmount kills this PID to tear down.
+binary="$vm_workdir/target/release/ext4.exe"
+mount_cmd="$binary mount $vm_image_path --drive $vm_mnt_dir ${EXTRA_FLAGS[*]+"${EXTRA_FLAGS[*]}"}"
+
+echo "[test-mount] mounting at $vm_mnt_dir_win ..."
+
+nohup ssh "${key_opts[@]+"${key_opts[@]}"}" \
+    -o ConnectTimeout=15 \
+    -o ServerAliveInterval=30 \
+    -o ServerAliveCountMax=10 \
+    "$vm_host" \
+    "$mount_cmd" \
+    > "$mount_log" 2>&1 &
+ssh_pid=$!
+disown "$ssh_pid"
+
+# Wait up to 30 s for the driver to print its ready line.
+echo "[test-mount] waiting for 'ext4 mounted at' signal..."
+ready=0
+for i in $(seq 1 30); do
+    if grep -q "ext4 mounted at" "$mount_log" 2>/dev/null; then
+        ready=1; break
+    fi
+    if ! kill -0 "$ssh_pid" 2>/dev/null; then
+        echo "ERROR: mount process exited before signalling ready" >&2
+        cat "$mount_log" >&2
+        exit 1
+    fi
+    sleep 1
+done
+
+if [[ "$ready" -eq 0 ]]; then
+    echo "ERROR: 'ext4 mounted at' not seen after 30 s" >&2
+    cat "$mount_log" >&2
+    kill "$ssh_pid" 2>/dev/null || true
+    exit 1
+fi
+
+# ── Save state ────────────────────────────────────────────────────────────────
+cat > "$state_file" <<EOF
+SCENARIO=$SCENARIO
+IMAGE_TYPE=$image_type
+IMAGE_FILE=$image_file
+RUN_ID=$run_id
+HOST_IMAGE_PATH=$host_image_path
+VM_IMAGE_PATH=$vm_image_path
+VM_MOUNT_DIR=$vm_mnt_dir
+VM_MOUNT_DIR_WIN=$vm_mnt_dir_win
+VM_HOST=$vm_host
+SSH_PID=$ssh_pid
+MOUNT_LOG=$mount_log
+EOF
+
+echo ""
+echo "  Mounted at: $vm_mnt_dir_win"
+echo "  Browse it in Explorer or CMD on the Windows VM."
+echo ""
+echo "  Live log: tail -f $mount_log"
+echo "  Unmount:  bash scripts/test-unmount"

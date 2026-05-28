@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Unmount a directory left running by scripts/test-mount.
+#
+# Kills the background SSH session that keeps ext4.exe alive; WinFsp
+# cleans up the reparse point automatically when the driver process exits.
+# Also removes the host-side disk image and the VM mount directory.
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+state_file="$repo_root/.test-mount-state"
+
+[[ -f "$state_file" ]] || {
+    echo "ERROR: no active mount ($state_file not found)" >&2
+    exit 1
+}
+
+# shellcheck disable=SC1090
+source "$state_file"
+
+echo "[test-unmount] unmounting $SCENARIO (${VM_MOUNT_DIR_WIN:-$SCENARIO})"
+
+# Kill the SSH background session → ext4.exe dies → WinFsp removes the reparse point.
+if [[ -n "${SSH_PID:-}" ]] && kill -0 "$SSH_PID" 2>/dev/null; then
+    kill "$SSH_PID"
+    echo "[test-unmount] SSH session terminated (pid=$SSH_PID)"
+    sleep 2   # brief quiesce for WinFsp teardown
+else
+    echo "[test-unmount] SSH session already gone (pid=${SSH_PID:-?})"
+fi
+
+# Remove the VM-side mount directory (WinFsp leaves it; clean it up).
+if [[ -n "${VM_MOUNT_DIR_WIN:-}" && -n "${VM_HOST:-}" ]]; then
+    _get() { grep "^$1=" "$repo_root/.test-env" 2>/dev/null | head -1 | cut -d= -f2-; }
+    ssh_key=$(_get SSH_KEY)
+    key_opts=()
+    [[ -n "$ssh_key" && -f "$ssh_key" ]] && key_opts=(-i "$ssh_key" -o IdentitiesOnly=yes)
+    ssh "${key_opts[@]+"${key_opts[@]}"}" \
+        -o BatchMode=yes -o ConnectTimeout=10 \
+        "$VM_HOST" \
+        "powershell -NoProfile -NonInteractive -Command \"Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '$VM_MOUNT_DIR_WIN'\"" 2>/dev/null || true
+    echo "[test-unmount] removed VM mount dir: $VM_MOUNT_DIR_WIN"
+fi
+
+# Remove host-side image and its per-run directory.
+if [[ -f "${HOST_IMAGE_PATH:-}" ]]; then
+    rm -f "$HOST_IMAGE_PATH"
+    rmdir "$(dirname "$HOST_IMAGE_PATH")" 2>/dev/null || true
+    echo "[test-unmount] removed host image: $HOST_IMAGE_PATH"
+fi
+
+# Remove the log file.
+rm -f "${MOUNT_LOG:-}"
+
+# Remove state.
+rm -f "$state_file"
+
+echo "[test-unmount] done"
