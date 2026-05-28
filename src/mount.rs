@@ -79,6 +79,9 @@ impl Mount {
         }
     }
 
+    // On non-Windows (macOS dev/test builds), RW operations are not
+    // supported by the underlying C library. Fall back to read-only so
+    // the binary compiles for host-side smoke tests.
     #[cfg(not(all(windows, feature = "mount")))]
     pub fn open_rw(mt: &MountArgs) -> Result<Self> {
         Self::open(mt)
