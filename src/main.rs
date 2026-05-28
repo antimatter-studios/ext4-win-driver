@@ -281,6 +281,25 @@ enum Cmd {
         #[arg(value_parser = parse_hex_or_dec)]
         flags: u32,
     },
+    /// Create a special file: FIFO (named pipe), socket, char device, or
+    /// block device. `mode` includes type bits + permissions in octal
+    /// (e.g. 0o10644 for a FIFO with 0644 perms). `major` and `minor` are
+    /// device numbers for char/block devices; omit (or pass 0) for FIFO/socket.
+    Mknod {
+        #[command(flatten)]
+        mt: MountArgs,
+        path: String,
+        /// File type + permission bits in octal (e.g. 0o10644 = FIFO|0644).
+        /// Type bits: FIFO=0o10000, socket=0o140000, char=0o20000, blk=0o60000.
+        #[arg(value_parser = parse_hex_or_dec)]
+        mode: u32,
+        /// Major device number (0 for FIFO / socket).
+        #[arg(default_value_t = 0)]
+        major: u32,
+        /// Minor device number (0 for FIFO / socket).
+        #[arg(default_value_t = 0)]
+        minor: u32,
+    },
     /// Pre-allocate or punch a hole in a file.
     /// Flags: 0 = pre-allocate (may extend size), 1 = keep-size,
     /// 3 = punch-hole+keep-size, 16 = zero-range.
@@ -373,6 +392,7 @@ fn main() -> Result<()> {
         Cmd::Chmod { mt, path, mode } => cmd::chmod(&mt, &path, mode),
         Cmd::Chown { mt, path, uid, gid } => cmd::chown(&mt, &path, uid, gid),
         Cmd::Setflags { mt, path, flags } => cmd::setflags(&mt, &path, flags),
+        Cmd::Mknod { mt, path, mode, major, minor } => cmd::mknod(&mt, &path, mode as u16, major, minor),
         Cmd::Fallocate { mt, path, offset, len, flags } => cmd::fallocate(&mt, &path, offset, len, flags),
         #[cfg(all(windows, feature = "mount"))]
         Cmd::Mount {

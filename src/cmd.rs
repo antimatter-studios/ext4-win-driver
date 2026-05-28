@@ -797,6 +797,16 @@ pub fn setflags(mt: &MountArgs, path: &str, flags: u32) -> Result<()> {
     Ok(())
 }
 
+pub fn mknod(mt: &MountArgs, path: &str, mode: u16, major: u32, minor: u32) -> Result<()> {
+    let m = Mount::open_rw(mt)?;
+    let cp = CString::new(path).context("path contains NUL byte")?;
+    let rc = unsafe { fs_ext4_mknod(m.fs, cp.as_ptr(), mode, major, minor) };
+    if rc == 0 {
+        bail!("mknod({path:?}, mode=0o{mode:o}, {major}:{minor}) failed: {}", last_err());
+    }
+    Ok(())
+}
+
 pub fn mkdir(mt: &MountArgs, path: &str) -> Result<()> {
     let m = Mount::open_rw(mt)?;
     let cp = CString::new(path).context("path contains NUL byte")?;
