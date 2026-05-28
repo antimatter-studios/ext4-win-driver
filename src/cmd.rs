@@ -648,3 +648,88 @@ pub fn link(mt: &MountArgs, src: &str, dst: &str) -> Result<()> {
     }
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// write / mkdir / rmdir / unlink / truncate  (mutating CLI ops)
+// ---------------------------------------------------------------------------
+
+pub fn write_file(mt: &MountArgs, path: &str) -> Result<()> {
+    use std::io::Read;
+    let m = Mount::open_rw(mt)?;
+    let cp = CString::new(path).context("path contains NUL byte")?;
+    let mut data = Vec::new();
+    std::io::stdin().read_to_end(&mut data).context("reading stdin")?;
+    // Use pwrite at offset 0 to overwrite; fs_ext4_pwrite allocates blocks
+    // only for the written range so it works on both new and existing files.
+    // Truncate to the written length first so any existing tail is removed.
+    let rc = unsafe { fs_ext4_truncate(m.fs, cp.as_ptr(), 0) };
+    if rc != 0 {
+        bail!("truncate({path:?}, 0) failed: {}", last_err());
+    }
+    if !data.is_empty() {
+        let written = unsafe {
+            fs_ext4_pwrite(
+                m.fs,
+                cp.as_ptr(),
+                data.as_ptr() as *const c_void,
+                data.len(),
+                0,
+            )
+        };
+        if written < 0 {
+            bail!("pwrite({path:?}) failed: {}", last_err());
+        }
+    }
+    Ok(())
+}
+
+pub fn mkdir(mt: &MountArgs, path: &str) -> Result<()> {
+    let m = Mount::open_rw(mt)?;
+    let cp = CString::new(path).context("path contains NUL byte")?;
+    let rc = unsafe { fs_ext4_mkdir(m.fs, cp.as_ptr(), 0o755) };
+    if rc != 0 {
+        bail!("mkdir({path:?}) failed: {}", last_err());
+    }
+    Ok(())
+}
+
+pub fn rmdir(mt: &MountArgs, path: &str) -> Result<()> {
+    let m = Mount::open_rw(mt)?;
+    let cp = CString::new(path).context("path contains NUL byte")?;
+    let rc = unsafe { fs_ext4_rmdir(m.fs, cp.as_ptr()) };
+    if rc != 0 {
+        bail!("rmdir({path:?}) failed: {}", last_err());
+    }
+    Ok(())
+}
+
+pub fn unlink(mt: &MountArgs, path: &str) -> Result<()> {
+    let m = Mount::open_rw(mt)?;
+    let cp = CString::new(path).context("path contains NUL byte")?;
+    let rc = unsafe { fs_ext4_unlink(m.fs, cp.as_ptr()) };
+    if rc != 0 {
+        bail!("unlink({path:?}) failed: {}", last_err());
+    }
+    Ok(())
+}
+
+pub fn truncate(mt: &MountArgs, path: &str, size: u64) -> Result<()> {
+    let m = Mount::open_rw(mt)?;
+    let cp = CString::new(path).context("path contains NUL byte")?;
+    let rc = unsafe { fs_ext4_truncate(m.fs, cp.as_ptr(), size) };
+    if rc != 0 {
+        bail!("truncate({path:?}, {size}) failed: {}", last_err());
+    }
+    Ok(())
+}
+
+pub fn rename(mt: &MountArgs, src: &str, dst: &str) -> Result<()> {
+    let m = Mount::open_rw(mt)?;
+    let cs = CString::new(src).context("src contains NUL byte")?;
+    let cd = CString::new(dst).context("dst contains NUL byte")?;
+    let rc = unsafe { fs_ext4_rename2(m.fs, cs.as_ptr(), cd.as_ptr(), 0) };
+    if rc != 0 {
+        bail!("rename({src:?} -> {dst:?}) failed: {}", last_err());
+    }
+    Ok(())
+}
