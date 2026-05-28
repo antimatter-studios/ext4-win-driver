@@ -116,7 +116,8 @@ fn format_unix_time(secs: u32) -> String {
     // Algorithm: days since 1970-01-01
     let mut year = 1970u32;
     loop {
-        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+        let leap =
+            year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
         let dy = if leap { 366 } else { 365 };
         if days < dy {
             break;
@@ -124,7 +125,7 @@ fn format_unix_time(secs: u32) -> String {
         days -= dy;
         year += 1;
     }
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
     let months = [
         31u64,
         if leap { 29 } else { 28 },
@@ -332,7 +333,7 @@ pub fn stat(mt: &MountArgs, path: &str) -> Result<()> {
     println!("path:        {path}");
     println!("inode:       {}", attr.inode);
     println!("size:        {}", attr.size);
-    println!("mode:        {mode_str}  (0o{:o})", attr.mode & 0o7777);
+    println!("mode:        0o{:o}  ({mode_str})", attr.mode & 0o7777);
     println!("uid/gid:     {}/{}", attr.uid, attr.gid);
     println!("link_count:  {}", attr.link_count);
     println!("inode_flags: 0x{:08x}", attr.inode_flags);
@@ -508,8 +509,8 @@ pub fn parts(image: &Path) -> Result<()> {
         return Ok(());
     }
     println!(
-        "{:>3} {:>16} {:>16} {:>10} {}",
-        "#", "start (LBA)", "size (sectors)", "type", "name"
+        "{:>3} {:>16} {:>16} {:>10} name",
+        "#", "start (LBA)", "size (sectors)", "type"
     );
     for (i, p) in parts.iter().enumerate() {
         println!(
