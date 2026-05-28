@@ -291,7 +291,7 @@
       "status": "pending",
       "image": "ext4-basic.img",
       "_attempts": [],
-      "_notes": "Symlink coverage. The CLI's `cat` does NOT dereference symlinks (errors with 'not a regular file'); we therefore exercise the link via `stat` instead \u2014 file_type 7 = ext4 symlink, size 8 = strlen(\"test.txt\"). Capture: ./target/release/ext4 stat ../rust-fs-ext4/test-disks/ext4-basic.img /link.txt",
+      "_notes": "Symlink coverage via stat and cat. file_type 7 = ext4 symlink, size 8 = strlen('test.txt'). CLI cat dereferences symlinks, so verify-cat on /link.txt returns test.txt content. Capture: ./target/release/ext4 stat ../rust-fs-ext4/test-disks/ext4-basic.img /link.txt",
       "recipe": [
         {
           "op": "build-ext4-image"
@@ -305,6 +305,11 @@
           "op": "verify-stat",
           "path": "/link.txt",
           "expect_args": "'--expect-stdout-contains' 'size:        8'"
+        },
+        {
+          "op": "verify-cat",
+          "path": "/link.txt",
+          "expect_args": "'--expect-size' '16' '--expect-sha256' '8ce9a8091ad255e6be4b7e9a48f324aea35eb6d9e552628cc139598d97779dee'"
         }
       ],
       "image_type": "basic"
