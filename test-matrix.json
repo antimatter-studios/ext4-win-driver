@@ -282,7 +282,7 @@
         {
           "op": "verify-stat",
           "path": "/test.txt",
-          "expect_args": "'--expect-stdout-contains' 'file_type:   1'"
+          "expect_args": "'--expect-stdout-contains' 'type:        RegFile'"
         }
       ],
       "image_type": "basic"
@@ -299,7 +299,7 @@
         {
           "op": "verify-stat",
           "path": "/link.txt",
-          "expect_args": "'--expect-stdout-contains' 'file_type:   7'"
+          "expect_args": "'--expect-stdout-contains' 'type:        Symlink'"
         },
         {
           "op": "verify-stat",
@@ -404,7 +404,7 @@
         {
           "op": "verify-stat",
           "path": "/sparse.bin",
-          "expect_args": "'--expect-stdout-contains' 'file_type:   1'"
+          "expect_args": "'--expect-stdout-contains' 'type:        RegFile'"
         }
       ],
       "image_type": "deep_extents"
@@ -459,7 +459,7 @@
         },
         {
           "op": "verify-parts",
-          "expect_args": "'--expect-stdout-contains' 'GPT:linux'"
+          "expect_args": "'--expect-stdout-contains' 'GPT:0FC63DAF-8483-4772-8E79-3D69D8477DE4'"
         },
         {
           "op": "verify-parts",
