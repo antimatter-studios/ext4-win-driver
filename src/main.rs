@@ -255,6 +255,18 @@ enum Cmd {
         uid: u32,
         gid: u32,
     },
+    /// Pre-allocate or punch a hole in a file.
+    /// Flags: 0 = pre-allocate (may extend size), 1 = keep-size,
+    /// 3 = punch-hole+keep-size, 16 = zero-range.
+    Fallocate {
+        #[command(flatten)]
+        mt: MountArgs,
+        path: String,
+        offset: u64,
+        len: u64,
+        #[arg(long, default_value_t = 0)]
+        flags: i32,
+    },
     /// Mount the filesystem on a Windows drive letter via WinFsp.
     /// Defaults to read-write; pass `--ro` for read-only. Requires the
     /// `mount` feature and a Windows host.
@@ -334,6 +346,7 @@ fn main() -> Result<()> {
         Cmd::Touch { mt, path } => cmd::touch(&mt, &path),
         Cmd::Chmod { mt, path, mode } => cmd::chmod(&mt, &path, mode),
         Cmd::Chown { mt, path, uid, gid } => cmd::chown(&mt, &path, uid, gid),
+        Cmd::Fallocate { mt, path, offset, len, flags } => cmd::fallocate(&mt, &path, offset, len, flags),
         #[cfg(all(windows, feature = "mount"))]
         Cmd::Mount {
             mt,
