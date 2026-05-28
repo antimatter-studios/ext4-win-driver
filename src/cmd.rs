@@ -830,3 +830,17 @@ pub fn rename(mt: &MountArgs, src: &str, dst: &str) -> Result<()> {
     }
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// fallocate
+// ---------------------------------------------------------------------------
+
+pub fn fallocate(mt: &MountArgs, path: &str, offset: u64, len: u64, flags: i32) -> Result<()> {
+    let m = Mount::open_rw(mt)?;
+    let cp = CString::new(path).context("path contains NUL byte")?;
+    let rc = unsafe { fs_ext4_fallocate(m.fs, cp.as_ptr(), offset, len, flags) };
+    if rc != 0 {
+        bail!("fallocate({path:?}, offset={offset}, len={len}, flags={flags:#x}) failed: {}", last_err());
+    }
+    Ok(())
+}
