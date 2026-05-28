@@ -407,6 +407,13 @@ mod winfsp_adapter {
         (FILETIME_EPOCH_OFFSET_SEC.saturating_add(secs as u64)).saturating_mul(10_000_000)
     }
 
+    /// Convert a unix timestamp with nanosecond precision to FILETIME.
+    /// FILETIME resolution is 100 ns; we round nsec down to the nearest 100 ns.
+    fn unix_to_filetime_nsec(secs: u32, nsec: u32) -> u64 {
+        let base = (FILETIME_EPOCH_OFFSET_SEC.saturating_add(secs as u64)).saturating_mul(10_000_000);
+        base.saturating_add((nsec / 100) as u64)
+    }
+
     /// Apply a `FILE_FULL_EA_INFORMATION` buffer to `path` on `fs`.
     ///
     /// Parses the linked-list of EA entries and calls `fs_ext4_setxattr` for
@@ -491,10 +498,14 @@ mod winfsp_adapter {
         info.file_size = attr.size;
         // Allocation size: round up to 4 KiB, fine for an RO surface.
         info.allocation_size = (attr.size + 4095) & !4095;
-        info.creation_time = unix_to_filetime(attr.crtime.max(attr.mtime));
-        info.last_access_time = unix_to_filetime(attr.atime);
-        info.last_write_time = unix_to_filetime(attr.mtime);
-        info.change_time = unix_to_filetime(attr.ctime);
+        // Use sub-second precision where available (crtime_nsec / mtime_nsec may
+        // be 0 on old ext2/3 inodes; the fallback in fill_attr zeros the nsec fields).
+        let ct = unix_to_filetime_nsec(attr.crtime, attr.crtime_nsec)
+            .max(unix_to_filetime_nsec(attr.mtime, attr.mtime_nsec));
+        info.creation_time = ct;
+        info.last_access_time = unix_to_filetime_nsec(attr.atime, attr.atime_nsec);
+        info.last_write_time = unix_to_filetime_nsec(attr.mtime, attr.mtime_nsec);
+        info.change_time = unix_to_filetime_nsec(attr.ctime, attr.ctime_nsec);
         info.index_number = attr.inode as u64;
         info.hard_links = attr.link_count as u32;
         info.ea_size = 0;

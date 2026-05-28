@@ -287,10 +287,13 @@ pub fn stat(mt: &MountArgs, path: &str) -> Result<()> {
     println!("mode:        {mode_str}  (0o{:o})", attr.mode & 0o7777);
     println!("uid/gid:     {}/{}", attr.uid, attr.gid);
     println!("link_count:  {}", attr.link_count);
-    println!("atime:       {} ({})", attr.atime, format_unix_time(attr.atime));
-    println!("mtime:       {} ({})", attr.mtime, format_unix_time(attr.mtime));
-    println!("ctime:       {} ({})", attr.ctime, format_unix_time(attr.ctime));
-    println!("crtime:      {} ({})", attr.crtime, format_unix_time(attr.crtime));
+    println!("inode_flags: 0x{:08x}", attr.inode_flags);
+    println!("generation:  {}", attr.generation);
+    println!("blocks_512:  {}", attr.blocks_512);
+    println!("atime:       {}.{:09} ({})", attr.atime, attr.atime_nsec, format_unix_time(attr.atime));
+    println!("mtime:       {}.{:09} ({})", attr.mtime, attr.mtime_nsec, format_unix_time(attr.mtime));
+    println!("ctime:       {}.{:09} ({})", attr.ctime, attr.ctime_nsec, format_unix_time(attr.ctime));
+    println!("crtime:      {}.{:09} ({})", attr.crtime, attr.crtime_nsec, format_unix_time(attr.crtime));
     println!("type:        {:?}", attr.file_type);
     Ok(())
 }
