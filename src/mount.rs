@@ -368,12 +368,12 @@ mod winfsp_adapter {
     use winfsp::host::{FileSystemHost, FileSystemParams, OperationGuardStrategy, VolumeParams};
     use winfsp::host::DebugMode;
     use windows::Win32::Foundation::{
-        STATUS_ACCESS_DENIED, STATUS_DIRECTORY_NOT_EMPTY, STATUS_DISK_FULL, STATUS_END_OF_FILE,
-        STATUS_FILE_IS_A_DIRECTORY, STATUS_FILE_TOO_LARGE, STATUS_INSUFFICIENT_RESOURCES,
-        STATUS_INVALID_DEVICE_REQUEST, STATUS_INVALID_PARAMETER, STATUS_IO_DEVICE_ERROR,
-        STATUS_MEDIA_WRITE_PROTECTED, STATUS_NAME_TOO_LONG, STATUS_NOT_A_DIRECTORY,
-        STATUS_NOT_IMPLEMENTED, STATUS_NOT_SUPPORTED, STATUS_OBJECT_NAME_COLLISION,
-        STATUS_OBJECT_NAME_NOT_FOUND,
+        STATUS_ACCESS_DENIED, STATUS_BUFFER_OVERFLOW, STATUS_DIRECTORY_NOT_EMPTY,
+        STATUS_DISK_FULL, STATUS_END_OF_FILE, STATUS_FILE_IS_A_DIRECTORY, STATUS_FILE_TOO_LARGE,
+        STATUS_INSUFFICIENT_RESOURCES, STATUS_INVALID_DEVICE_REQUEST, STATUS_INVALID_PARAMETER,
+        STATUS_IO_DEVICE_ERROR, STATUS_MEDIA_WRITE_PROTECTED, STATUS_NAME_TOO_LONG,
+        STATUS_NOT_A_DIRECTORY, STATUS_NOT_IMPLEMENTED, STATUS_NOT_SUPPORTED,
+        STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_NOT_FOUND, STATUS_UNSUCCESSFUL,
     };
     use windows::Win32::Storage::FileSystem::{
         FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_READONLY,
@@ -1185,6 +1185,198 @@ mod winfsp_adapter {
             Ok(())
         }
 
+        // ---------------------------------------------------------------------------
+        // Extended Attributes (EAs) — ext4 xattrs exposed through WinFsp
+        //
+        // Mapping: we use the full xattr name (including namespace prefix like
+        // "user.") as the EA name. This preserves round-trip fidelity — a Linux
+        // tool that writes "user.color" sees the same name from Windows.
+        // Windows EA names are treated as opaque bytes; case is preserved.
+        // ---------------------------------------------------------------------------
+
+        fn get_extended_attributes(
+            &self,
+            context: &Self::FileContext,
+            buffer: &mut [u8],
+        ) -> FspResult<u32> {
+            let path = context.unix_path();
+            let Ok(cp) = CString::new(path.as_str()) else {
+                return Err(STATUS_OBJECT_NAME_NOT_FOUND.into());
+            };
+
+            // Probe xattr name list size.
+            let list_size = unsafe {
+                fs_ext4_listxattr(self.mount.fs, cp.as_ptr(), std::ptr::null_mut(), 0)
+            };
+            if list_size < 0 || list_size == 0 {
+                return Ok(0);
+            }
+
+            let mut list_buf = vec![0u8; list_size as usize];
+            let n = unsafe {
+                fs_ext4_listxattr(
+                    self.mount.fs,
+                    cp.as_ptr(),
+                    list_buf.as_mut_ptr() as *mut std::os::raw::c_char,
+                    list_buf.len(),
+                )
+            };
+            if n <= 0 {
+                return Ok(0);
+            }
+
+            // Collect NUL-separated names.
+            let mut names: Vec<Vec<u8>> = Vec::new();
+            let mut pos = 0usize;
+            while pos < n as usize {
+                let end = list_buf[pos..].iter().position(|&b| b == 0).unwrap_or(n as usize - pos);
+                if end == 0 {
+                    break;
+                }
+                names.push(list_buf[pos..pos + end].to_vec());
+                pos += end + 1;
+            }
+
+            let mut out_pos = 0usize;
+            let count = names.len();
+            for (i, name_bytes) in names.iter().enumerate() {
+                let Ok(cn) = CString::new(name_bytes.as_slice()) else {
+                    continue;
+                };
+
+                // Probe value size.
+                let val_size = unsafe {
+                    fs_ext4_getxattr(
+                        self.mount.fs,
+                        cp.as_ptr(),
+                        cn.as_ptr(),
+                        std::ptr::null_mut(),
+                        0,
+                    )
+                };
+                if val_size < 0 {
+                    continue;
+                }
+
+                let mut val_buf = vec![0u8; val_size as usize];
+                let val_n = unsafe {
+                    fs_ext4_getxattr(
+                        self.mount.fs,
+                        cp.as_ptr(),
+                        cn.as_ptr(),
+                        val_buf.as_mut_ptr() as *mut c_void,
+                        val_buf.len(),
+                    )
+                };
+                if val_n < 0 {
+                    continue;
+                }
+                let value = &val_buf[..val_n as usize];
+
+                let ea_name_len = name_bytes.len(); // NOT including NUL
+                let ea_val_len = value.len();
+                // Header = 8 bytes; name field = ea_name_len + 1 (NUL); then value.
+                let raw_size = 8 + ea_name_len + 1 + ea_val_len;
+                let is_last = i == count - 1;
+                // Each entry aligned to 4 bytes except (optionally) the last.
+                let padded_size = if is_last { raw_size } else { (raw_size + 3) & !3 };
+
+                if out_pos + padded_size > buffer.len() {
+                    return Err(STATUS_BUFFER_OVERFLOW.into());
+                }
+
+                let entry = &mut buffer[out_pos..];
+                let next_offset = if is_last { 0u32 } else { padded_size as u32 };
+                entry[0..4].copy_from_slice(&next_offset.to_le_bytes());
+                entry[4] = 0; // Flags
+                entry[5] = ea_name_len as u8;
+                entry[6..8].copy_from_slice(&(ea_val_len as u16).to_le_bytes());
+                entry[8..8 + ea_name_len].copy_from_slice(name_bytes);
+                entry[8 + ea_name_len] = 0; // NUL terminator
+                if ea_val_len > 0 {
+                    entry[8 + ea_name_len + 1..8 + ea_name_len + 1 + ea_val_len]
+                        .copy_from_slice(value);
+                }
+                out_pos += padded_size;
+            }
+
+            Ok(out_pos as u32)
+        }
+
+        fn set_extended_attributes(
+            &self,
+            context: &Self::FileContext,
+            buffer: &[u8],
+            file_info: &mut FileInfo,
+        ) -> FspResult<()> {
+            self.ensure_writable()?;
+
+            let path = context.unix_path();
+            let Ok(cp) = CString::new(path.as_str()) else {
+                return Err(STATUS_OBJECT_NAME_NOT_FOUND.into());
+            };
+
+            let mut pos = 0usize;
+            loop {
+                if pos + 8 > buffer.len() {
+                    break;
+                }
+                let next_offset =
+                    u32::from_le_bytes(buffer[pos..pos + 4].try_into().unwrap()) as usize;
+                let name_len = buffer[pos + 5] as usize;
+                let val_len =
+                    u16::from_le_bytes(buffer[pos + 6..pos + 8].try_into().unwrap()) as usize;
+
+                let name_start = pos + 8;
+                let name_end = name_start + name_len;
+                let val_start = name_end + 1; // skip NUL terminator
+                let val_end = val_start + val_len;
+
+                if val_end > buffer.len() {
+                    break;
+                }
+
+                let name_bytes = &buffer[name_start..name_end];
+                let value = &buffer[val_start..val_end];
+
+                if let Ok(cn) = CString::new(name_bytes) {
+                    if val_len == 0 {
+                        // Zero-length value means delete the attribute.
+                        unsafe { fs_ext4_removexattr(self.mount.fs, cp.as_ptr(), cn.as_ptr()) };
+                    } else {
+                        let rc = unsafe {
+                            fs_ext4_setxattr(
+                                self.mount.fs,
+                                cp.as_ptr(),
+                                cn.as_ptr(),
+                                value.as_ptr() as *const c_void,
+                                value.len(),
+                            )
+                        };
+                        if rc != 0 {
+                            let errno = unsafe { fs_ext4_last_errno() };
+                            return Err(errno_to_status(errno).into());
+                        }
+                    }
+                }
+
+                if next_offset == 0 {
+                    break;
+                }
+                pos += next_offset;
+            }
+
+            // Refresh file_info after EA mutation.
+            if let Ok(attr) = stat_path(self.mount.fs, &path) {
+                populate_file_info(&attr, file_info);
+                *context.attr.lock().unwrap() = attr;
+            } else {
+                return Err(STATUS_UNSUCCESSFUL.into());
+            }
+
+            Ok(())
+        }
+
         // Called by WinFsp for exact-filename directory queries (e.g.
         // FindFirstFile("Z:\some-name")) when pass_query_directory_filename
         // is set. Avoids the broken FSD pattern-matching path for non-wildcard
@@ -1256,6 +1448,7 @@ mod winfsp_adapter {
             .case_preserved_names(true)
             .unicode_on_disk(true)
             .pass_query_directory_filename(true)
+            .extended_attributes(true)
             .filesystem_name("ext4");
         // Default: read-only volume. Drop the flag for `--rw` mounts so
         // WinFsp dispatches mutating ops to our `create`/`write`/etc.
