@@ -190,6 +190,46 @@ enum Cmd {
         /// New path to create.
         dst: String,
     },
+    /// Write stdin to a file (creates or overwrites). Reads until EOF,
+    /// truncates the file to the written length.
+    Write {
+        #[command(flatten)]
+        mt: MountArgs,
+        path: String,
+    },
+    /// Create a directory (mode 0755).
+    Mkdir {
+        #[command(flatten)]
+        mt: MountArgs,
+        path: String,
+    },
+    /// Remove an empty directory.
+    Rmdir {
+        #[command(flatten)]
+        mt: MountArgs,
+        path: String,
+    },
+    /// Remove a file (not a directory).
+    Unlink {
+        #[command(flatten)]
+        mt: MountArgs,
+        path: String,
+    },
+    /// Truncate a file to the given byte length.
+    Truncate {
+        #[command(flatten)]
+        mt: MountArgs,
+        path: String,
+        size: u64,
+    },
+    /// Rename / move `src` to `dst`. Destination must not already exist;
+    /// use `--replace` to atomically overwrite an existing destination.
+    Rename {
+        #[command(flatten)]
+        mt: MountArgs,
+        src: String,
+        dst: String,
+    },
     /// Mount the filesystem on a Windows drive letter via WinFsp.
     /// Defaults to read-write; pass `--ro` for read-only. Requires the
     /// `mount` feature and a Windows host.
@@ -260,6 +300,12 @@ fn main() -> Result<()> {
         Cmd::Removexattr { mt, path, name } => cmd::removexattr(&mt, &path, &name),
         Cmd::Symlink { mt, target, linkpath } => cmd::symlink(&mt, &target, &linkpath),
         Cmd::Link { mt, src, dst } => cmd::link(&mt, &src, &dst),
+        Cmd::Write { mt, path } => cmd::write_file(&mt, &path),
+        Cmd::Mkdir { mt, path } => cmd::mkdir(&mt, &path),
+        Cmd::Rmdir { mt, path } => cmd::rmdir(&mt, &path),
+        Cmd::Unlink { mt, path } => cmd::unlink(&mt, &path),
+        Cmd::Truncate { mt, path, size } => cmd::truncate(&mt, &path, size),
+        Cmd::Rename { mt, src, dst } => cmd::rename(&mt, &src, &dst),
         #[cfg(all(windows, feature = "mount"))]
         Cmd::Mount {
             mt,
