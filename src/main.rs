@@ -6,6 +6,15 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
+/// Parse `0x...` hex or plain decimal u32 for clap `--value-parser`.
+fn parse_hex_or_dec(s: &str) -> Result<u32, String> {
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u32::from_str_radix(hex, 16).map_err(|e| e.to_string())
+    } else {
+        s.parse::<u32>().map_err(|e| e.to_string())
+    }
+}
+
 use winfsp_fs_skeleton::FsBackend;
 
 mod cmd;
@@ -261,6 +270,17 @@ enum Cmd {
         uid: u32,
         gid: u32,
     },
+    /// Set inode flags (FS_IOC_SETFLAGS). `flags` is the full new flags word
+    /// in decimal or hex (prefix `0x`). Common values:
+    ///   0x10 = IMMUTABLE, 0x20 = APPEND_ONLY, 0x40 = NODUMP, 0x200 = NOATIME.
+    Setflags {
+        #[command(flatten)]
+        mt: MountArgs,
+        path: String,
+        /// New flags value (hex with 0x prefix or decimal).
+        #[arg(value_parser = parse_hex_or_dec)]
+        flags: u32,
+    },
     /// Pre-allocate or punch a hole in a file.
     /// Flags: 0 = pre-allocate (may extend size), 1 = keep-size,
     /// 3 = punch-hole+keep-size, 16 = zero-range.
@@ -352,6 +372,7 @@ fn main() -> Result<()> {
         Cmd::Touch { mt, path } => cmd::touch(&mt, &path),
         Cmd::Chmod { mt, path, mode } => cmd::chmod(&mt, &path, mode),
         Cmd::Chown { mt, path, uid, gid } => cmd::chown(&mt, &path, uid, gid),
+        Cmd::Setflags { mt, path, flags } => cmd::setflags(&mt, &path, flags),
         Cmd::Fallocate { mt, path, offset, len, flags } => cmd::fallocate(&mt, &path, offset, len, flags),
         #[cfg(all(windows, feature = "mount"))]
         Cmd::Mount {

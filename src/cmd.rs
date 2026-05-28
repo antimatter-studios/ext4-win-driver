@@ -787,6 +787,16 @@ pub fn chown(mt: &MountArgs, path: &str, uid: u32, gid: u32) -> Result<()> {
     Ok(())
 }
 
+pub fn setflags(mt: &MountArgs, path: &str, flags: u32) -> Result<()> {
+    let m = Mount::open_rw(mt)?;
+    let cp = CString::new(path).context("path contains NUL byte")?;
+    let rc = unsafe { fs_ext4_set_flags(m.fs, cp.as_ptr(), flags) };
+    if rc != 0 {
+        bail!("set_flags({path:?}, 0x{flags:08x}) failed: {}", last_err());
+    }
+    Ok(())
+}
+
 pub fn mkdir(mt: &MountArgs, path: &str) -> Result<()> {
     let m = Mount::open_rw(mt)?;
     let cp = CString::new(path).context("path contains NUL byte")?;
