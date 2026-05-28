@@ -261,8 +261,7 @@ fn resolve_symlink(m: &Mount, path: &str) -> Result<String> {
         if r < 0 {
             bail!("readlink({current:?}) failed: {}", last_err());
         }
-        let nul = buf.iter().position(|&b| b == 0).unwrap_or(0);
-        let target = std::str::from_utf8(&buf[..nul]).unwrap_or("").to_owned();
+        let target = std::str::from_utf8(&buf[..r as usize]).unwrap_or("").to_owned();
         if target.starts_with('/') {
             current = target;
         } else {
@@ -507,8 +506,7 @@ pub fn readlink(mt: &MountArgs, path: &str) -> Result<()> {
     if r < 0 {
         bail!("readlink({path:?}) failed: {}", last_err());
     }
-    let nul = buf.iter().position(|&b| b == 0).unwrap_or(0);
-    let target = std::str::from_utf8(&buf[..nul]).unwrap_or("<invalid utf-8>");
+    let target = std::str::from_utf8(&buf[..r as usize]).unwrap_or("<invalid utf-8>");
     println!("{target}");
     Ok(())
 }

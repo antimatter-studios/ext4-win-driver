@@ -466,8 +466,7 @@ mod winfsp_adapter {
             if r < 0 {
                 return Err(STATUS_OBJECT_NAME_NOT_FOUND.into());
             }
-            let nul = buf.iter().position(|&b| b == 0).unwrap_or(0);
-            let target = std::str::from_utf8(&buf[..nul]).unwrap_or("").to_owned();
+            let target = std::str::from_utf8(&buf[..r as usize]).unwrap_or("").to_owned();
             if target.starts_with('/') {
                 current = target;
             } else {
@@ -542,10 +541,6 @@ mod winfsp_adapter {
         pub size: Mutex<u64>,
         /// Cached when the open call comes in; refreshed on get_file_info.
         attr: Mutex<fs_ext4_attr_t>,
-        /// Set by `set_delete`, consumed by `cleanup`. WinFsp guarantees
-        /// `cleanup` runs after the last handle is closed, so this is the
-        /// place where the actual `unlink`/`rmdir` happens.
-        delete: Mutex<bool>,
     }
 
     impl Ext4FileContext {
@@ -653,7 +648,6 @@ mod winfsp_adapter {
                 is_dir: matches!(attr.file_type, fs_ext4_file_type_t::Dir),
                 size: Mutex::new(attr.size),
                 attr: Mutex::new(attr),
-                delete: Mutex::new(false),
             })
         }
 
@@ -887,7 +881,6 @@ mod winfsp_adapter {
                 is_dir,
                 size: Mutex::new(attr.size),
                 attr: Mutex::new(attr),
-                delete: Mutex::new(false),
             })
         }
 
@@ -1130,13 +1123,11 @@ mod winfsp_adapter {
 
         fn set_delete(
             &self,
-            context: &Self::FileContext,
+            _context: &Self::FileContext,
             _file_name: &U16CStr,
-            delete_file: bool,
+            _delete_file: bool,
         ) -> FspResult<()> {
-            self.ensure_writable()?;
-            *context.delete.lock().unwrap() = delete_file;
-            Ok(())
+            self.ensure_writable()
         }
 
         fn cleanup(&self, context: &Self::FileContext, _file_name: Option<&U16CStr>, flags: u32) {
