@@ -466,3 +466,80 @@ pub fn audit(mt: &MountArgs, max_dirs: u32, max_entries_per_dir: u32) -> Result<
 
     bail!("audit found {} anomaly(s)", report.anomalies_found);
 }
+
+// ---------------------------------------------------------------------------
+// listxattr / getxattr
+// ---------------------------------------------------------------------------
+
+pub fn listxattr(mt: &MountArgs, path: &str) -> Result<()> {
+    let m = Mount::open(mt)?;
+    let cp = CString::new(path).context("path contains NUL byte")?;
+
+    // First call: probe required size.
+    let needed = unsafe { fs_ext4_listxattr(m.fs, cp.as_ptr(), std::ptr::null_mut(), 0) };
+    if needed < 0 {
+        bail!("listxattr({path:?}) failed: {}", last_err());
+    }
+    if needed == 0 {
+        return Ok(()); // no xattrs
+    }
+
+    let mut buf = vec![0u8; needed as usize];
+    let n = unsafe {
+        fs_ext4_listxattr(
+            m.fs,
+            cp.as_ptr(),
+            buf.as_mut_ptr() as *mut std::os::raw::c_char,
+            buf.len(),
+        )
+    };
+    if n < 0 {
+        bail!("listxattr({path:?}) failed: {}", last_err());
+    }
+
+    // NUL-separated list of names.
+    let mut pos = 0usize;
+    while pos < n as usize {
+        let end = buf[pos..].iter().position(|&b| b == 0).unwrap_or(n as usize - pos);
+        if end == 0 {
+            break;
+        }
+        println!("{}", std::str::from_utf8(&buf[pos..pos + end]).unwrap_or("<invalid>"));
+        pos += end + 1;
+    }
+    Ok(())
+}
+
+pub fn getxattr(mt: &MountArgs, path: &str, name: &str) -> Result<()> {
+    use std::io::Write;
+
+    let m = Mount::open(mt)?;
+    let cp = CString::new(path).context("path contains NUL byte")?;
+    let cn = CString::new(name).context("name contains NUL byte")?;
+
+    // Probe size.
+    let needed = unsafe { fs_ext4_getxattr(m.fs, cp.as_ptr(), cn.as_ptr(), std::ptr::null_mut(), 0) };
+    if needed < 0 {
+        bail!("getxattr({path:?}, {name:?}) failed: {}", last_err());
+    }
+    if needed == 0 {
+        return Ok(()); // empty value
+    }
+
+    let mut buf = vec![0u8; needed as usize];
+    let n = unsafe {
+        fs_ext4_getxattr(
+            m.fs,
+            cp.as_ptr(),
+            cn.as_ptr(),
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len(),
+        )
+    };
+    if n < 0 {
+        bail!("getxattr({path:?}, {name:?}) failed: {}", last_err());
+    }
+
+    std::io::stdout().lock().write_all(&buf[..n as usize])?;
+    Ok(())
+}

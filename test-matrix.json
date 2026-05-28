@@ -215,10 +215,10 @@
       "image_type": "inline"
     },
     "xattr-getxattr": {
-      "status": "blocked-needs-getxattr-cli",
+      "status": "pending",
       "image": "ext4-xattr.img",
       "_attempts": [],
-      "_notes": "Cannot fully exercise xattrs until ext4.exe grows a `getxattr` subcommand (or the WinFsp adapter exposes xattrs as Windows EAs / ADS). The ls-only operations[] above is a stub so the scenario shape is documented; actual unblock is to add a `getxattr` op type + CLI subcommand. Track in docs/test-harness.md.",
+      "_notes": "Verify xattr reads via the new `getxattr` CLI subcommand. tagged.txt has user.color=red (3 bytes, sha256=b1f5...) and tagged_dir has user.purpose=documents (9 bytes, sha256=9b16...). Hashes captured via: ext4 getxattr ext4-xattr.img /tagged.txt user.color | shasum -a 256",
       "recipe": [
         {
           "op": "build-ext4-image"
@@ -227,6 +227,18 @@
           "op": "verify-ls",
           "path": "/",
           "expect_args": "'--expect-name' '.' '--expect-name' '..' '--expect-name' 'lost+found' '--expect-name' 'plain.txt' '--expect-name' 'tagged.txt' '--expect-name' 'tagged_dir'"
+        },
+        {
+          "op": "verify-getxattr",
+          "path": "/tagged.txt",
+          "name": "user.color",
+          "expect_args": "'--expect-size' '3' '--expect-sha256' 'b1f51a511f1da0cd348b8f8598db32e61cb963e5fc69e2b41485bf99590ed75a'"
+        },
+        {
+          "op": "verify-getxattr",
+          "path": "/tagged_dir",
+          "name": "user.purpose",
+          "expect_args": "'--expect-size' '9' '--expect-sha256' '9b16b44d0e0a5cac4f968befb0b5b5eba913f9ef3dfa1501ed728b6ead72a357'"
         }
       ],
       "image_type": "xattr"

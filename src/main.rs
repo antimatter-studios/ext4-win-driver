@@ -129,6 +129,19 @@ enum Cmd {
         #[arg(long, default_value_t = 0)]
         max_entries_per_dir: u32,
     },
+    /// List extended attribute names for a path (one per line).
+    Listxattr {
+        #[command(flatten)]
+        mt: MountArgs,
+        path: String,
+    },
+    /// Print the raw bytes of one extended attribute to stdout.
+    Getxattr {
+        #[command(flatten)]
+        mt: MountArgs,
+        path: String,
+        name: String,
+    },
     /// Mount the filesystem on a Windows drive letter via WinFsp.
     /// Defaults to read-write; pass `--ro` for read-only. Requires the
     /// `mount` feature and a Windows host.
@@ -182,6 +195,8 @@ fn main() -> Result<()> {
             max_dirs,
             max_entries_per_dir,
         } => cmd::audit(&mt, max_dirs, max_entries_per_dir),
+        Cmd::Listxattr { mt, path } => cmd::listxattr(&mt, &path),
+        Cmd::Getxattr { mt, path, name } => cmd::getxattr(&mt, &path, &name),
         #[cfg(all(windows, feature = "mount"))]
         Cmd::Mount {
             mt,
