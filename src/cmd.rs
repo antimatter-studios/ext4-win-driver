@@ -496,6 +496,24 @@ pub fn audit(mt: &MountArgs, max_dirs: u32, max_entries_per_dir: u32) -> Result<
 }
 
 // ---------------------------------------------------------------------------
+// readlink
+// ---------------------------------------------------------------------------
+
+pub fn readlink(mt: &MountArgs, path: &str) -> Result<()> {
+    let m = Mount::open(mt)?;
+    let cp = CString::new(path).context("path contains NUL byte")?;
+    let mut buf = vec![0u8; 4096];
+    let r = unsafe { fs_ext4_readlink(m.fs, cp.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) };
+    if r < 0 {
+        bail!("readlink({path:?}) failed: {}", last_err());
+    }
+    let nul = buf.iter().position(|&b| b == 0).unwrap_or(0);
+    let target = std::str::from_utf8(&buf[..nul]).unwrap_or("<invalid utf-8>");
+    println!("{target}");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // listxattr / getxattr
 // ---------------------------------------------------------------------------
 

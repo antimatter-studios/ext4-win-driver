@@ -129,6 +129,12 @@ enum Cmd {
         #[arg(long, default_value_t = 0)]
         max_entries_per_dir: u32,
     },
+    /// Print the target of a symbolic link.
+    Readlink {
+        #[command(flatten)]
+        mt: MountArgs,
+        path: String,
+    },
     /// List extended attribute names for a path (one per line).
     Listxattr {
         #[command(flatten)]
@@ -195,6 +201,7 @@ fn main() -> Result<()> {
             max_dirs,
             max_entries_per_dir,
         } => cmd::audit(&mt, max_dirs, max_entries_per_dir),
+        Cmd::Readlink { mt, path } => cmd::readlink(&mt, &path),
         Cmd::Listxattr { mt, path } => cmd::listxattr(&mt, &path),
         Cmd::Getxattr { mt, path, name } => cmd::getxattr(&mt, &path, &name),
         #[cfg(all(windows, feature = "mount"))]
