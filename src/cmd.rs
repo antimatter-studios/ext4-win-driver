@@ -29,6 +29,10 @@ pub(crate) fn last_err() -> String {
     }
 }
 
+const S_ISUID: u16 = 0o4000;
+const S_ISGID: u16 = 0o2000;
+const S_ISVTX: u16 = 0o1000;
+
 fn cchar_slice_to_string(buf: &[std::os::raw::c_char]) -> String {
     let bytes: Vec<u8> = buf
         .iter()
@@ -51,6 +55,25 @@ fn ftype_str(ft: u8) -> &'static str {
     }
 }
 
+/// Returns the execute-position character when a special bit (setuid/setgid/sticky) is set.
+///
+/// `set_char` is `'s'` for setuid/setgid and `'t'` for sticky. When the exec bit is also
+/// set the lower-case form is used; when it is clear the upper-case form is used; when the
+/// special bit is not set at all the plain exec/dash is returned.
+fn special_exec_bit(mode: u16, set_bit: u16, exec_bit: u16, set_char: char) -> char {
+    if mode & set_bit != 0 {
+        if mode & exec_bit != 0 {
+            set_char
+        } else {
+            set_char.to_uppercase().next().unwrap()
+        }
+    } else if mode & exec_bit != 0 {
+        'x'
+    } else {
+        '-'
+    }
+}
+
 /// Format a POSIX mode integer as an `ls -l`-style string (e.g. `drwxr-xr-x`).
 fn format_mode_str(mode: u16, file_type: &fs_ext4_file_type_t) -> String {
     let type_char = match file_type {
@@ -63,46 +86,19 @@ fn format_mode_str(mode: u16, file_type: &fs_ext4_file_type_t) -> String {
         fs_ext4_file_type_t::Sock => 's',
         _ => '?',
     };
-    let setuid = mode & 0o4000 != 0;
-    let setgid = mode & 0o2000 != 0;
-    let sticky = mode & 0o1000 != 0;
     let bit = |mask: u16, c: char, alt: char| if mode & mask != 0 { c } else { alt };
     format!(
         "{}{}{}{}{}{}{}{}{}{}",
         type_char,
         bit(0o400, 'r', '-'),
         bit(0o200, 'w', '-'),
-        if setuid {
-            if mode & 0o100 != 0 {
-                's'
-            } else {
-                'S'
-            }
-        } else {
-            bit(0o100, 'x', '-')
-        },
+        special_exec_bit(mode, S_ISUID, 0o100, 's'),
         bit(0o040, 'r', '-'),
         bit(0o020, 'w', '-'),
-        if setgid {
-            if mode & 0o010 != 0 {
-                's'
-            } else {
-                'S'
-            }
-        } else {
-            bit(0o010, 'x', '-')
-        },
+        special_exec_bit(mode, S_ISGID, 0o010, 's'),
         bit(0o004, 'r', '-'),
         bit(0o002, 'w', '-'),
-        if sticky {
-            if mode & 0o001 != 0 {
-                't'
-            } else {
-                'T'
-            }
-        } else {
-            bit(0o001, 'x', '-')
-        },
+        special_exec_bit(mode, S_ISVTX, 0o001, 't'),
     )
 }
 
@@ -239,11 +235,7 @@ pub fn ls(mt: &MountArgs, path: &str) -> Result<()> {
             break;
         }
         let entry = unsafe { &*e };
-        let name_bytes: Vec<u8> = entry.name[..entry.name_len as usize]
-            .iter()
-            .map(|b| *b as u8)
-            .collect();
-        let name = String::from_utf8_lossy(&name_bytes);
+        let name = cchar_slice_to_string(&entry.name[..entry.name_len as usize]);
         println!(
             "{:>10} {} {}",
             entry.inode,
@@ -274,11 +266,9 @@ pub fn verify_ls(
             break;
         }
         let entry = unsafe { &*e };
-        let name_bytes: Vec<u8> = entry.name[..entry.name_len as usize]
-            .iter()
-            .map(|b| *b as u8)
-            .collect();
-        got.push(String::from_utf8_lossy(&name_bytes).into_owned());
+        got.push(cchar_slice_to_string(
+            &entry.name[..entry.name_len as usize],
+        ));
     }
     unsafe { fs_ext4_dir_close(iter) };
 
@@ -471,11 +461,7 @@ fn walk(m: &Mount, dir: &str, depth: u32, max_depth: u32) -> Result<()> {
             break;
         }
         let entry = unsafe { &*e };
-        let name_bytes: Vec<u8> = entry.name[..entry.name_len as usize]
-            .iter()
-            .map(|b| *b as u8)
-            .collect();
-        let name = String::from_utf8_lossy(&name_bytes).into_owned();
+        let name = cchar_slice_to_string(&entry.name[..entry.name_len as usize]);
         if name == "." || name == ".." {
             continue;
         }
