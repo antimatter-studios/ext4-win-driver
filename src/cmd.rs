@@ -4,15 +4,15 @@
 //! wraps the `fs_ext4_*` C ABI. Each subcommand opens a `Mount`, calls a
 //! few C ABI functions, prints, and drops.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use fs_ext4::capi::*;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::path::Path;
 use std::sync::Mutex;
 
-use crate::MountArgs;
 use crate::mount::Mount;
+use crate::MountArgs;
 use winfsp_fs_skeleton::partition;
 
 // ---------------------------------------------------------------------------
@@ -55,26 +55,54 @@ fn ftype_str(ft: u8) -> &'static str {
 fn format_mode_str(mode: u16, file_type: &fs_ext4_file_type_t) -> String {
     let type_char = match file_type {
         fs_ext4_file_type_t::RegFile => '-',
-        fs_ext4_file_type_t::Dir     => 'd',
+        fs_ext4_file_type_t::Dir => 'd',
         fs_ext4_file_type_t::Symlink => 'l',
-        fs_ext4_file_type_t::ChrDev  => 'c',
-        fs_ext4_file_type_t::BlkDev  => 'b',
-        fs_ext4_file_type_t::Fifo    => 'p',
-        fs_ext4_file_type_t::Sock    => 's',
-        _                            => '?',
+        fs_ext4_file_type_t::ChrDev => 'c',
+        fs_ext4_file_type_t::BlkDev => 'b',
+        fs_ext4_file_type_t::Fifo => 'p',
+        fs_ext4_file_type_t::Sock => 's',
+        _ => '?',
     };
     let setuid = mode & 0o4000 != 0;
     let setgid = mode & 0o2000 != 0;
     let sticky = mode & 0o1000 != 0;
     let bit = |mask: u16, c: char, alt: char| if mode & mask != 0 { c } else { alt };
     format!(
-        "{}{}{}{}{}{}{}{}{}{}", type_char,
-        bit(0o400, 'r', '-'), bit(0o200, 'w', '-'),
-        if setuid { if mode & 0o100 != 0 { 's' } else { 'S' } } else { bit(0o100, 'x', '-') },
-        bit(0o040, 'r', '-'), bit(0o020, 'w', '-'),
-        if setgid { if mode & 0o010 != 0 { 's' } else { 'S' } } else { bit(0o010, 'x', '-') },
-        bit(0o004, 'r', '-'), bit(0o002, 'w', '-'),
-        if sticky { if mode & 0o001 != 0 { 't' } else { 'T' } } else { bit(0o001, 'x', '-') },
+        "{}{}{}{}{}{}{}{}{}{}",
+        type_char,
+        bit(0o400, 'r', '-'),
+        bit(0o200, 'w', '-'),
+        if setuid {
+            if mode & 0o100 != 0 {
+                's'
+            } else {
+                'S'
+            }
+        } else {
+            bit(0o100, 'x', '-')
+        },
+        bit(0o040, 'r', '-'),
+        bit(0o020, 'w', '-'),
+        if setgid {
+            if mode & 0o010 != 0 {
+                's'
+            } else {
+                'S'
+            }
+        } else {
+            bit(0o010, 'x', '-')
+        },
+        bit(0o004, 'r', '-'),
+        bit(0o002, 'w', '-'),
+        if sticky {
+            if mode & 0o001 != 0 {
+                't'
+            } else {
+                'T'
+            }
+        } else {
+            bit(0o001, 'x', '-')
+        },
     )
 }
 
@@ -90,19 +118,39 @@ fn format_unix_time(secs: u32) -> String {
     loop {
         let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
         let dy = if leap { 366 } else { 365 };
-        if days < dy { break; }
+        if days < dy {
+            break;
+        }
         days -= dy;
         year += 1;
     }
     let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let months = [31u64, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let months = [
+        31u64,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut month = 1u32;
     for m in &months {
-        if days < *m { break; }
+        if days < *m {
+            break;
+        }
         days -= m;
         month += 1;
     }
-    format!("{year:04}-{month:02}-{:02}T{hour:02}:{min:02}:{sec:02}Z", days + 1)
+    format!(
+        "{year:04}-{month:02}-{:02}T{hour:02}:{min:02}:{sec:02}Z",
+        days + 1
+    )
 }
 
 fn format_uuid(u: &[u8; 16]) -> String {
@@ -290,10 +338,30 @@ pub fn stat(mt: &MountArgs, path: &str) -> Result<()> {
     println!("inode_flags: 0x{:08x}", attr.inode_flags);
     println!("generation:  {}", attr.generation);
     println!("blocks_512:  {}", attr.blocks_512);
-    println!("atime:       {}.{:09} ({})", attr.atime, attr.atime_nsec, format_unix_time(attr.atime));
-    println!("mtime:       {}.{:09} ({})", attr.mtime, attr.mtime_nsec, format_unix_time(attr.mtime));
-    println!("ctime:       {}.{:09} ({})", attr.ctime, attr.ctime_nsec, format_unix_time(attr.ctime));
-    println!("crtime:      {}.{:09} ({})", attr.crtime, attr.crtime_nsec, format_unix_time(attr.crtime));
+    println!(
+        "atime:       {}.{:09} ({})",
+        attr.atime,
+        attr.atime_nsec,
+        format_unix_time(attr.atime)
+    );
+    println!(
+        "mtime:       {}.{:09} ({})",
+        attr.mtime,
+        attr.mtime_nsec,
+        format_unix_time(attr.mtime)
+    );
+    println!(
+        "ctime:       {}.{:09} ({})",
+        attr.ctime,
+        attr.ctime_nsec,
+        format_unix_time(attr.ctime)
+    );
+    println!(
+        "crtime:      {}.{:09} ({})",
+        attr.crtime,
+        attr.crtime_nsec,
+        format_unix_time(attr.crtime)
+    );
     println!("type:        {:?}", attr.file_type);
     Ok(())
 }
@@ -606,11 +674,17 @@ pub fn listxattr(mt: &MountArgs, path: &str) -> Result<()> {
     // NUL-separated list of names.
     let mut pos = 0usize;
     while pos < n as usize {
-        let end = buf[pos..].iter().position(|&b| b == 0).unwrap_or(n as usize - pos);
+        let end = buf[pos..]
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(n as usize - pos);
         if end == 0 {
             break;
         }
-        println!("{}", std::str::from_utf8(&buf[pos..pos + end]).unwrap_or("<invalid>"));
+        println!(
+            "{}",
+            std::str::from_utf8(&buf[pos..pos + end]).unwrap_or("<invalid>")
+        );
         pos += end + 1;
     }
     Ok(())
@@ -624,7 +698,8 @@ pub fn getxattr(mt: &MountArgs, path: &str, name: &str) -> Result<()> {
     let cn = CString::new(name).context("name contains NUL byte")?;
 
     // Probe size.
-    let needed = unsafe { fs_ext4_getxattr(m.fs, cp.as_ptr(), cn.as_ptr(), std::ptr::null_mut(), 0) };
+    let needed =
+        unsafe { fs_ext4_getxattr(m.fs, cp.as_ptr(), cn.as_ptr(), std::ptr::null_mut(), 0) };
     if needed < 0 {
         bail!("getxattr({path:?}, {name:?}) failed: {}", last_err());
     }
@@ -720,7 +795,9 @@ pub fn write_file(mt: &MountArgs, path: &str) -> Result<()> {
     let m = Mount::open_rw(mt)?;
     let cp = CString::new(path).context("path contains NUL byte")?;
     let mut data = Vec::new();
-    std::io::stdin().read_to_end(&mut data).context("reading stdin")?;
+    std::io::stdin()
+        .read_to_end(&mut data)
+        .context("reading stdin")?;
 
     // Create the file if it doesn't exist yet (fs_ext4_truncate fails on ENOENT).
     let mut attr: fs_ext4_attr_t = unsafe { std::mem::zeroed() };
@@ -870,7 +947,10 @@ pub fn fallocate(mt: &MountArgs, path: &str, offset: u64, len: u64, flags: i32) 
     let cp = CString::new(path).context("path contains NUL byte")?;
     let rc = unsafe { fs_ext4_fallocate(m.fs, cp.as_ptr(), offset, len, flags) };
     if rc != 0 {
-        bail!("fallocate({path:?}, offset={offset}, len={len}, flags={flags:#x}) failed: {}", last_err());
+        bail!(
+            "fallocate({path:?}, offset={offset}, len={len}, flags={flags:#x}) failed: {}",
+            last_err()
+        );
     }
     Ok(())
 }

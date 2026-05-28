@@ -42,7 +42,7 @@ impl FsBackend for Ext4Backend {
 #[command(
     name = "ext4",
     about = "Browse and (eventually) mount ext4 volumes on Windows",
-    version,
+    version
 )]
 struct Cli {
     #[command(subcommand)]
@@ -357,7 +357,12 @@ fn main() -> Result<()> {
             expect_count,
         } => cmd::verify_ls(&mt, &path, &expect_names, expect_count),
         Cmd::Stat { mt, path } => cmd::stat(&mt, &path),
-        Cmd::Cat { mt, path, offset, length } => cmd::cat(&mt, &path, offset, length),
+        Cmd::Cat {
+            mt,
+            path,
+            offset,
+            length,
+        } => cmd::cat(&mt, &path, offset, length),
         Cmd::Tree { mt, max_depth } => cmd::tree(&mt, max_depth),
         Cmd::Parts { image } => cmd::parts(&image),
         Cmd::Audit {
@@ -368,7 +373,13 @@ fn main() -> Result<()> {
         Cmd::Readlink { mt, path } => cmd::readlink(&mt, &path),
         Cmd::Listxattr { mt, path } => cmd::listxattr(&mt, &path),
         Cmd::Getxattr { mt, path, name } => cmd::getxattr(&mt, &path, &name),
-        Cmd::Setxattr { mt, path, name, value, stdin } => {
+        Cmd::Setxattr {
+            mt,
+            path,
+            name,
+            value,
+            stdin,
+        } => {
             let bytes = if stdin {
                 use std::io::Read;
                 let mut buf = Vec::new();
@@ -380,7 +391,11 @@ fn main() -> Result<()> {
             cmd::setxattr(&mt, &path, &name, &bytes)
         }
         Cmd::Removexattr { mt, path, name } => cmd::removexattr(&mt, &path, &name),
-        Cmd::Symlink { mt, target, linkpath } => cmd::symlink(&mt, &target, &linkpath),
+        Cmd::Symlink {
+            mt,
+            target,
+            linkpath,
+        } => cmd::symlink(&mt, &target, &linkpath),
         Cmd::Link { mt, src, dst } => cmd::link(&mt, &src, &dst),
         Cmd::Write { mt, path } => cmd::write_file(&mt, &path),
         Cmd::Mkdir { mt, path } => cmd::mkdir(&mt, &path),
@@ -392,8 +407,20 @@ fn main() -> Result<()> {
         Cmd::Chmod { mt, path, mode } => cmd::chmod(&mt, &path, mode),
         Cmd::Chown { mt, path, uid, gid } => cmd::chown(&mt, &path, uid, gid),
         Cmd::Setflags { mt, path, flags } => cmd::setflags(&mt, &path, flags),
-        Cmd::Mknod { mt, path, mode, major, minor } => cmd::mknod(&mt, &path, mode as u16, major, minor),
-        Cmd::Fallocate { mt, path, offset, len, flags } => cmd::fallocate(&mt, &path, offset, len, flags),
+        Cmd::Mknod {
+            mt,
+            path,
+            mode,
+            major,
+            minor,
+        } => cmd::mknod(&mt, &path, mode as u16, major, minor),
+        Cmd::Fallocate {
+            mt,
+            path,
+            offset,
+            len,
+            flags,
+        } => cmd::fallocate(&mt, &path, offset, len, flags),
         #[cfg(all(windows, feature = "mount"))]
         Cmd::Mount {
             mt,

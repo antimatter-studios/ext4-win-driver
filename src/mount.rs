@@ -11,7 +11,7 @@
 //! The `mount` feature additionally builds a WinFsp `FileSystemContext`
 //! adapter on top — see the bottom of this file.
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 use fs_ext4::capi::*;
 use std::ffi::CString;
 use std::os::raw::{c_int, c_void};
@@ -266,12 +266,7 @@ struct SliceCtx {
     len: u64,
 }
 
-extern "C" fn slice_read_cb(
-    ctx: *mut c_void,
-    buf: *mut c_void,
-    offset: u64,
-    length: u64,
-) -> c_int {
+extern "C" fn slice_read_cb(ctx: *mut c_void, buf: *mut c_void, offset: u64, length: u64) -> c_int {
     if ctx.is_null() || buf.is_null() {
         return -1;
     }
@@ -360,29 +355,27 @@ mod winfsp_adapter {
     //! already mapped. Cost per call is O(chunk), not O(filesize), so
     //! large copies don't fragment or quadratically rewrite the file.
 
-    use anyhow::{Context, Result, anyhow};
+    use anyhow::{anyhow, Context, Result};
     use fs_ext4::capi::*;
-    use std::ffi::{CString, c_void};
+    use std::ffi::{c_void, CString};
     use std::sync::Mutex;
     use widestring::U16CStr;
-    use winfsp::Result as FspResult;
-    use winfsp::filesystem::{
-        DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, ModificationDescriptor,
-        OpenFileInfo, VolumeInfo, WideNameInfo,
-    };
-    use winfsp::host::{FileSystemHost, FileSystemParams, OperationGuardStrategy, VolumeParams};
-    use winfsp::host::DebugMode;
     use windows::Win32::Foundation::{
-        STATUS_ACCESS_DENIED, STATUS_BUFFER_OVERFLOW, STATUS_DIRECTORY_NOT_EMPTY,
-        STATUS_DISK_FULL, STATUS_END_OF_FILE, STATUS_FILE_IS_A_DIRECTORY, STATUS_FILE_TOO_LARGE,
+        STATUS_ACCESS_DENIED, STATUS_BUFFER_OVERFLOW, STATUS_DIRECTORY_NOT_EMPTY, STATUS_DISK_FULL,
+        STATUS_END_OF_FILE, STATUS_FILE_IS_A_DIRECTORY, STATUS_FILE_TOO_LARGE,
         STATUS_INSUFFICIENT_RESOURCES, STATUS_INVALID_DEVICE_REQUEST, STATUS_INVALID_PARAMETER,
         STATUS_IO_DEVICE_ERROR, STATUS_MEDIA_WRITE_PROTECTED, STATUS_NAME_TOO_LONG,
         STATUS_NOT_A_DIRECTORY, STATUS_NOT_IMPLEMENTED, STATUS_NOT_SUPPORTED,
         STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_NOT_FOUND, STATUS_UNSUCCESSFUL,
     };
-    use windows::Win32::Storage::FileSystem::{
-        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_READONLY,
+    use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_READONLY};
+    use winfsp::filesystem::{
+        DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, ModificationDescriptor,
+        OpenFileInfo, VolumeInfo, WideNameInfo,
     };
+    use winfsp::host::DebugMode;
+    use winfsp::host::{FileSystemHost, FileSystemParams, OperationGuardStrategy, VolumeParams};
+    use winfsp::Result as FspResult;
     use winfsp_sys::{FILE_ACCESS_RIGHTS, FILE_FLAGS_AND_ATTRIBUTES};
 
     use crate::cmd::last_err;
@@ -415,8 +408,10 @@ mod winfsp_adapter {
     /// Convert a unix timestamp with nanosecond precision to FILETIME.
     /// FILETIME resolution is 100 ns; we round nsec down to the nearest 100 ns.
     fn unix_to_filetime_nsec(secs: u32, nsec: u32) -> u64 {
-        let base = (FILETIME_EPOCH_OFFSET_SEC.saturating_add(secs as u64)).saturating_mul(10_000_000);
-        base.saturating_add((nsec / 100) as u64)
+        let whole_second_ticks =
+            (FILETIME_EPOCH_OFFSET_SEC.saturating_add(secs as u64)).saturating_mul(10_000_000);
+        let sub_second_ticks = (nsec / 100) as u64;
+        whole_second_ticks.saturating_add(sub_second_ticks)
     }
 
     /// Apply a `FILE_FULL_EA_INFORMATION` buffer to `path` on `fs`.
@@ -425,21 +420,15 @@ mod winfsp_adapter {
     /// each non-empty entry, or `fs_ext4_removexattr` for zero-length entries.
     /// Skips entries whose names contain NUL bytes (malformed); returns the
     /// first `fs_ext4_setxattr` error, if any.
-    fn apply_ea_buffer(
-        fs: *mut fs_ext4_fs_t,
-        cp: &CString,
-        buffer: &[u8],
-    ) -> FspResult<()> {
+    fn apply_ea_buffer(fs: *mut fs_ext4_fs_t, cp: &CString, buffer: &[u8]) -> FspResult<()> {
         let mut pos = 0usize;
         loop {
             if pos + 8 > buffer.len() {
                 break;
             }
-            let next_offset =
-                u32::from_le_bytes(buffer[pos..pos + 4].try_into().unwrap()) as usize;
+            let next_offset = u32::from_le_bytes(buffer[pos..pos + 4].try_into().unwrap()) as usize;
             let name_len = buffer[pos + 5] as usize;
-            let val_len =
-                u16::from_le_bytes(buffer[pos + 6..pos + 8].try_into().unwrap()) as usize;
+            let val_len = u16::from_le_bytes(buffer[pos + 6..pos + 8].try_into().unwrap()) as usize;
             let name_start = pos + 8;
             let name_end = name_start + name_len;
             let val_start = name_end + 1;
@@ -521,7 +510,10 @@ mod winfsp_adapter {
 
     /// Stat a path through the C ABI. Returns the resolved path and populated
     /// `attr`, following symlinks up to 8 levels deep.
-    fn stat_path_resolved(fs: *mut fs_ext4_fs_t, unix_path: &str) -> FspResult<(String, fs_ext4_attr_t)> {
+    fn stat_path_resolved(
+        fs: *mut fs_ext4_fs_t,
+        unix_path: &str,
+    ) -> FspResult<(String, fs_ext4_attr_t)> {
         let mut current = unix_path.to_owned();
         for _ in 0..8 {
             let cp = CString::new(current.as_str())
@@ -537,7 +529,8 @@ mod winfsp_adapter {
             }
             // Symlink: read target (null-terminated); resolve relative to link's parent.
             let mut buf = vec![0u8; 4096];
-            let r = unsafe { fs_ext4_readlink(fs, cp.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) };
+            let r =
+                unsafe { fs_ext4_readlink(fs, cp.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) };
             if r < 0 {
                 return Err(STATUS_OBJECT_NAME_NOT_FOUND.into());
             }
@@ -638,10 +631,7 @@ mod winfsp_adapter {
             let mut vi: fs_ext4_volume_info_t = unsafe { std::mem::zeroed() };
             let r = unsafe { fs_ext4_get_volume_info(mount.fs, &mut vi) };
             if r != 0 {
-                return Err(anyhow!(
-                    "fs_ext4_get_volume_info failed: {}",
-                    last_err()
-                ));
+                return Err(anyhow!("fs_ext4_get_volume_info failed: {}", last_err()));
             }
             let label_bytes: Vec<u8> = vi
                 .volume_name
@@ -683,8 +673,7 @@ mod winfsp_adapter {
             _security_descriptor: Option<&mut [c_void]>,
             _resolve_reparse: impl FnOnce(&U16CStr) -> Option<FileSecurity>,
         ) -> FspResult<FileSecurity> {
-            let unix_path =
-                winpath_to_unix(file_name).map_err(|_| STATUS_OBJECT_NAME_NOT_FOUND)?;
+            let unix_path = winpath_to_unix(file_name).map_err(|_| STATUS_OBJECT_NAME_NOT_FOUND)?;
             let attr = stat_path(self.mount.fs, &unix_path)?;
             let is_dir = matches!(attr.file_type, fs_ext4_file_type_t::Dir);
             let mut attrs: u32 = if is_dir {
@@ -828,9 +817,7 @@ mod winfsp_adapter {
                 };
                 if name == "." || name == ".." {
                     if !started {
-                        if Some(name.to_string())
-                            == resume_after.as_ref().map(|s| s.to_string())
-                        {
+                        if Some(name.to_string()) == resume_after.as_ref().map(|s| s.to_string()) {
                             started = true;
                         }
                         continue;
@@ -932,8 +919,7 @@ mod winfsp_adapter {
             file_info: &mut OpenFileInfo,
         ) -> FspResult<Self::FileContext> {
             self.ensure_writable()?;
-            let unix_path =
-                winpath_to_unix(file_name).map_err(|_| STATUS_OBJECT_NAME_NOT_FOUND)?;
+            let unix_path = winpath_to_unix(file_name).map_err(|_| STATUS_OBJECT_NAME_NOT_FOUND)?;
             let cp = CString::new(unix_path.as_str())
                 .map_err(|_| windows::core::Error::from(STATUS_OBJECT_NAME_NOT_FOUND))?;
 
@@ -1204,8 +1190,7 @@ mod winfsp_adapter {
             } else {
                 0
             };
-            let rc =
-                unsafe { fs_ext4_rename2(self.mount.fs, csrc.as_ptr(), cdst.as_ptr(), flags) };
+            let rc = unsafe { fs_ext4_rename2(self.mount.fs, csrc.as_ptr(), cdst.as_ptr(), flags) };
             if rc != 0 {
                 let errno = unsafe { fs_ext4_last_errno() };
                 return Err(errno_to_status(errno).into());
@@ -1300,9 +1285,8 @@ mod winfsp_adapter {
             };
 
             // Probe xattr name list size.
-            let list_size = unsafe {
-                fs_ext4_listxattr(self.mount.fs, cp.as_ptr(), std::ptr::null_mut(), 0)
-            };
+            let list_size =
+                unsafe { fs_ext4_listxattr(self.mount.fs, cp.as_ptr(), std::ptr::null_mut(), 0) };
             if list_size < 0 || list_size == 0 {
                 return Ok(0);
             }
@@ -1324,7 +1308,10 @@ mod winfsp_adapter {
             let mut names: Vec<Vec<u8>> = Vec::new();
             let mut pos = 0usize;
             while pos < n as usize {
-                let end = list_buf[pos..].iter().position(|&b| b == 0).unwrap_or(n as usize - pos);
+                let end = list_buf[pos..]
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(n as usize - pos);
                 if end == 0 {
                     break;
                 }
@@ -1374,7 +1361,11 @@ mod winfsp_adapter {
                 let raw_size = 8 + ea_name_len + 1 + ea_val_len;
                 let is_last = i == count - 1;
                 // Each entry aligned to 4 bytes except (optionally) the last.
-                let padded_size = if is_last { raw_size } else { (raw_size + 3) & !3 };
+                let padded_size = if is_last {
+                    raw_size
+                } else {
+                    (raw_size + 3) & !3
+                };
 
                 if out_pos + padded_size > buffer.len() {
                     return Err(STATUS_BUFFER_OVERFLOW.into());
@@ -1595,8 +1586,16 @@ mod tests {
     /// even though the adapter itself is Windows-only.
     #[test]
     fn writable_check_branch() {
-        let ro = Mount { fs: std::ptr::null_mut(), cb_ctx: None, writable: false };
-        let rw = Mount { fs: std::ptr::null_mut(), cb_ctx: None, writable: true };
+        let ro = Mount {
+            fs: std::ptr::null_mut(),
+            cb_ctx: None,
+            writable: false,
+        };
+        let rw = Mount {
+            fs: std::ptr::null_mut(),
+            cb_ctx: None,
+            writable: true,
+        };
 
         // Mirrors `if !self.mount.writable { return Err(STATUS_MEDIA_WRITE_PROTECTED.into()); }`.
         let ro_blocks = !ro.writable;
@@ -1605,4 +1604,3 @@ mod tests {
         assert!(rw_passes, "ensure_writable() must pass on RW mount");
     }
 }
-
