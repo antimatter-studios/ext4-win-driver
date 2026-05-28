@@ -440,7 +440,7 @@ mod winfsp_adapter {
         info.last_write_time = unix_to_filetime(attr.mtime);
         info.change_time = unix_to_filetime(attr.ctime);
         info.index_number = attr.inode as u64;
-        info.hard_links = 0;
+        info.hard_links = attr.link_count as u32;
         info.ea_size = 0;
     }
 
@@ -1030,17 +1030,21 @@ mod winfsp_adapter {
             let path = context.unix_path();
             let cp = CString::new(path.as_str())
                 .map_err(|_| windows::core::Error::from(STATUS_OBJECT_NAME_NOT_FOUND))?;
-            let atime_sec = filetime_to_unix(last_access_time).unwrap_or(KEEP_UNCHANGED);
-            let mtime_sec = filetime_to_unix(last_write_time).unwrap_or(KEEP_UNCHANGED);
+            let (atime_sec, atime_nsec) = filetime_to_unix_nsec(last_access_time)
+                .map(|(s, n)| (s, n))
+                .unwrap_or((KEEP_UNCHANGED, 0));
+            let (mtime_sec, mtime_nsec) = filetime_to_unix_nsec(last_write_time)
+                .map(|(s, n)| (s, n))
+                .unwrap_or((KEEP_UNCHANGED, 0));
             if atime_sec != KEEP_UNCHANGED || mtime_sec != KEEP_UNCHANGED {
                 let rc = unsafe {
                     fs_ext4_utimens(
                         self.mount.fs,
                         cp.as_ptr(),
                         atime_sec,
-                        0,
+                        atime_nsec,
                         mtime_sec,
-                        0,
+                        mtime_nsec,
                     )
                 };
                 if rc != 0 {
@@ -1407,10 +1411,10 @@ mod winfsp_adapter {
         }
     }
 
-    /// FILETIME (100-ns since 1601) → Unix-seconds. Returns `None` for
-    /// 0 (WinFsp's "leave unchanged" sentinel) and for FILETIMEs that
-    /// predate the Unix epoch (clamped to `None` rather than wrapping).
-    fn filetime_to_unix(ft: u64) -> Option<u32> {
+    /// FILETIME (100-ns since 1601) → (Unix seconds, sub-second nanoseconds).
+    /// Returns `None` for 0 (WinFsp's "leave unchanged" sentinel) and for
+    /// FILETIMEs that predate the Unix epoch.
+    fn filetime_to_unix_nsec(ft: u64) -> Option<(u32, u32)> {
         if ft == 0 {
             return None;
         }
@@ -1419,13 +1423,16 @@ mod winfsp_adapter {
             return None;
         }
         let unix = secs_since_1601 - FILETIME_EPOCH_OFFSET_SEC;
+        let nsec = ((ft % 10_000_000) * 100) as u32;
         if unix > u32::MAX as u64 {
-            // Beyond Y2038 (in unix32 land). We pass through the high
-            // bits anyway — the C ABI takes u32 and ext4 either truncates
-            // or stores extra precision via xattrs. For v1 just clamp.
-            return Some(u32::MAX - 1);
+            return Some((u32::MAX - 1, 0));
         }
-        Some(unix as u32)
+        Some((unix as u32, nsec))
+    }
+
+    /// FILETIME → Unix seconds only (convenience wrapper used by read paths).
+    fn filetime_to_unix(ft: u64) -> Option<u32> {
+        filetime_to_unix_nsec(ft).map(|(s, _)| s)
     }
 
     /// Mount the given ext4 source on a Windows mount point.
