@@ -12,6 +12,18 @@
 # serialize_mounts = true).
 max_parallel = 1
 
+[groups]
+# smoke — fast host-only scenarios for pre-flight wiring checks.
+# Covers: Alpine VM build, 9p share, host-side ls/cat/stat/tree/parts.
+# Run with: bash scripts/run-matrix.sh smoke
+smoke = [
+  "basic-ro-cat",
+  "basic-ro-list",
+  "basic-stat-test-txt",
+  "basic-tree-hash",
+  "basic-info-volume",
+]
+
 [project]
 name        = "ext4-win-driver"
 binary      = "target/release/ext4.exe"
@@ -60,6 +72,10 @@ env_prefix = "$env:LIBCLANG_PATH = 'C:\\Program Files\\LLVM\\bin';"
 # vendor/rust-fs-ext4/test-disks/ is empty. Set HOST_IMAGE_DIR in
 # .test-env to point at your local copy; defaults to diskimages/.
 image_dir = "${HOST_IMAGE_DIR:-diskimages}"
+# Build the Windows binary on the VM (cross-compilation is not set up
+# on the Mac side). The harness ships the source tree first, then runs
+# this command from [vm].workdir via SSH.
+vm_build_command = "cargo build --release --features mount"
 
 [ops]
 # v1 ops (bare command string -> implicit `host = "vm"`). Consumed by
@@ -101,8 +117,10 @@ info  = "{binary} info  {image}"
 # SSH into the Alpine builder VM and invoke _vm-builder.sh for this
 # scenario's image type. The image is written to /host/{run_id}/ inside
 # the VM, which maps to {image_dir}/{run_id}/ on the host via 9p share.
+# Uses scripts/builder-ssh.sh (not raw ssh) so it never goes through the
+# Windows VM SSH mux.
 host = "host"
-command = "ssh -p ${EXT4_BUILDER_PORT:-2222} -i ${EXT4_BUILDER_KEY} -o StrictHostKeyChecking=no -o BatchMode=yes root@localhost \"mkdir -p /host/{run_id} && sh /host/_vm-builder.sh /host/{run_id} {scenario.image_type}\""
+command = "bash scripts/builder-ssh.sh \"mkdir -p /host/{run_id} && sh /host/_vm-builder.sh /host/{run_id} {scenario.image_type}\""
 expect_exit = 0
 
 # ── Host-side verifiers ──────────────────────────────────────────────────────

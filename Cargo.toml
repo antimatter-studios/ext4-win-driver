@@ -63,7 +63,7 @@ ctrlc = "3"
 # pin the exact header version we tested against rather than tracking
 # whatever choco's winfsp package ships this week. Runtime behaviour
 # is identical either way (both link via delayload of winfsp-x64.dll).
-winfsp = { path = "vendor/winfsp-rs/winfsp", features = ["delayload"], optional = true, default-features = false }
+winfsp = { path = "vendor/winfsp-rs/winfsp", features = ["delayload", "system"], optional = true, default-features = false }
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",

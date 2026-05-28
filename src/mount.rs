@@ -365,7 +365,8 @@ mod winfsp_adapter {
         DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, ModificationDescriptor,
         OpenFileInfo, VolumeInfo, WideNameInfo,
     };
-    use winfsp::host::{FileSystemHost, VolumeParams};
+    use winfsp::host::{FileSystemHost, FileSystemParams, OperationGuardStrategy, VolumeParams};
+    use winfsp::host::DebugMode;
     use windows::Win32::Foundation::{
         STATUS_ACCESS_DENIED, STATUS_DIRECTORY_NOT_EMPTY, STATUS_DISK_FULL, STATUS_END_OF_FILE,
         STATUS_FILE_IS_A_DIRECTORY, STATUS_FILE_TOO_LARGE, STATUS_INSUFFICIENT_RESOURCES,
@@ -720,6 +721,39 @@ mod winfsp_adapter {
                     Err(_) => continue,
                 };
                 if name == "." || name == ".." {
+                    if !started {
+                        if Some(name.to_string())
+                            == resume_after.as_ref().map(|s| s.to_string())
+                        {
+                            started = true;
+                        }
+                        continue;
+                    }
+                    // Stat the correct path: "." → parent_path, ".." → parent of parent_path.
+                    let dot_path = if name == "." {
+                        parent_path.clone()
+                    } else if parent_path == "/" {
+                        "/".to_string()
+                    } else {
+                        let idx = parent_path.rfind('/').unwrap_or(0);
+                        if idx == 0 {
+                            "/".to_string()
+                        } else {
+                            parent_path[..idx].to_string()
+                        }
+                    };
+                    let attr = match stat_path(self.mount.fs, &dot_path) {
+                        Ok(a) => a,
+                        Err(_) => continue,
+                    };
+                    dir_info.reset();
+                    populate_file_info(&attr, dir_info.file_info_mut());
+                    if dir_info.set_name(name).is_err() {
+                        continue;
+                    }
+                    if !dir_info.append_to_buffer(buffer, &mut cursor) {
+                        break;
+                    }
                     continue;
                 }
 
@@ -1081,13 +1115,6 @@ mod winfsp_adapter {
             if flags & FSP_CLEANUP_DELETE == 0 {
                 return;
             }
-            if !*context.delete.lock().unwrap() {
-                return;
-            }
-            // RO-mount safety net: `set_delete` would have already been
-            // rejected by `ensure_writable`, but if anything ever flips the
-            // flag through a side channel, refuse to act on it here too.
-            // Cleanup has no return path so we just early-out.
             if !self.mount.writable {
                 return;
             }
@@ -1138,6 +1165,35 @@ mod winfsp_adapter {
             // on create (Office, etc.) don't blow up.
             Ok(())
         }
+
+        // Called by WinFsp for exact-filename directory queries (e.g.
+        // FindFirstFile("Z:\some-name")) when pass_query_directory_filename
+        // is set. Avoids the broken FSD pattern-matching path for non-wildcard
+        // lookups that caused Remove-Item to fail via IsReparsePointLikeSymlink.
+        fn get_dir_info_by_name(
+            &self,
+            context: &Self::FileContext,
+            file_name: &U16CStr,
+            out_dir_info: &mut DirInfo,
+        ) -> FspResult<()> {
+            let parent = context.unix_path();
+            let name = file_name.to_string_lossy();
+            let child_path = if parent == "/" {
+                format!("/{name}")
+            } else {
+                format!("{parent}/{name}")
+            };
+            let attr = stat_path(self.mount.fs, &child_path)?;
+            populate_file_info(&attr, out_dir_info.file_info_mut());
+            // WinFsp passes DirInfo through FspFileSystemAddDirInfo which copies raw bytes;
+            // the filename must NOT include a null terminator in the Size field or the
+            // kernel pattern match fails ("lost+found\0" != "lost+found").
+            let name_wide: Vec<u16> = name.encode_utf16().collect();
+            out_dir_info
+                .set_name_raw(name_wide.as_slice())
+                .map_err(|_| windows::core::Error::from(STATUS_OBJECT_NAME_NOT_FOUND))?;
+            Ok(())
+        }
     }
 
     /// FILETIME (100-ns since 1601) → Unix-seconds. Returns `None` for
@@ -1180,6 +1236,7 @@ mod winfsp_adapter {
             .case_sensitive_search(true)
             .case_preserved_names(true)
             .unicode_on_disk(true)
+            .pass_query_directory_filename(true)
             .filesystem_name("ext4");
         // Default: read-only volume. Drop the flag for `--rw` mounts so
         // WinFsp dispatches mutating ops to our `create`/`write`/etc.
@@ -1189,8 +1246,16 @@ mod winfsp_adapter {
             params.read_only_volume(true);
         }
 
-        let mut host = FileSystemHost::new(params, ctx)
-            .map_err(|e| anyhow!("FileSystemHost::new failed: {e}"))?;
+        let mut host = FileSystemHost::new_with_options(
+            FileSystemParams {
+                use_dir_info_by_name: true,
+                volume_params: params,
+                guard_strategy: OperationGuardStrategy::Fine,
+                debug_mode: DebugMode::none(),
+            },
+            ctx,
+        )
+        .map_err(|e| anyhow!("FileSystemHost::new failed: {e}"))?;
 
         // FileSystemHost::mount accepts any S where &S: Into<MountPoint>,
         // and `&str: AsRef<OsStr>` satisfies the existing blanket impl.
@@ -1201,6 +1266,7 @@ mod winfsp_adapter {
 
         let mode = if writable { "RW" } else { "RO" };
         println!("ext4 mounted at {mount_point} ({mode}). Ctrl-C to unmount.");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
         // Block until Ctrl-C; WinFsp's host runs on its own threads.
         let (tx, rx) = std::sync::mpsc::channel();
         ctrlc::set_handler(move || {
