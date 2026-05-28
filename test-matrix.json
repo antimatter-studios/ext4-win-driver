@@ -498,7 +498,7 @@
       "image_type": "basic"
     },
     "rw-mkdir-rmdir": {
-      "status": "blocked-rmdir-via-mount-driver-bug",
+      "status": "pending",
       "image": "ext4-basic.img",
       "_attempts": [
         {
@@ -823,6 +823,42 @@
           "rw_flag": "--rw",
           "expect_sha256": "8ce9a8091ad255e6be4b7e9a48f324aea35eb6d9e552628cc139598d97779dee",
           "extra": "__none__"
+        }
+      ],
+      "image_type": "basic"
+    },
+    "rw-write-durability": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "_attempts": [],
+      "_notes": "Write a new file via WinFsp, ship the modified image back to the host, then verify on-disk content with the native ext4 CLI. Confirms writes are flushed to the image before WinFsp unmounts.",
+      "recipe": [
+        {
+          "op": "build-ext4-image"
+        },
+        {
+          "op": "ship-to-vm",
+          "src": "{image_dir}/{run_id}/ext4-basic.img",
+          "dest": "{vm.workdir}/ext4-basic.img"
+        },
+        {
+          "op": "win-write",
+          "path": "/durability.txt",
+          "content": "durability-check",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "ship-to-host",
+          "src": "{vm.workdir}/ext4-basic.img",
+          "dest": "{image_dir}/{run_id}/ext4-basic.img"
+        },
+        {
+          "op": "verify-cat",
+          "path": "/durability.txt",
+          "expect_args": "'--expect-size' '16' '--expect-sha256' '4985f28f3992e8bd290be1366f5448eec7d8c68eec99063d7ac00e93d954f078'"
         }
       ],
       "image_type": "basic"
