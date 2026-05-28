@@ -244,15 +244,45 @@ pub fn stat(mt: &MountArgs, path: &str) -> Result<()> {
 // cat
 // ---------------------------------------------------------------------------
 
+/// Resolve symlinks up to 8 hops; returns the final non-symlink path.
+fn resolve_symlink(m: &Mount, path: &str) -> Result<String> {
+    let mut current = path.to_owned();
+    for _ in 0..8 {
+        let cp = CString::new(current.as_str()).context("path contains NUL byte")?;
+        let mut attr: fs_ext4_attr_t = unsafe { std::mem::zeroed() };
+        if unsafe { fs_ext4_stat(m.fs, cp.as_ptr(), &mut attr) } != 0 {
+            bail!("stat({current:?}) failed: {}", last_err());
+        }
+        if !matches!(attr.file_type, fs_ext4_file_type_t::Symlink) {
+            return Ok(current);
+        }
+        let mut buf = vec![0u8; 4096];
+        let r = unsafe { fs_ext4_readlink(m.fs, cp.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) };
+        if r < 0 {
+            bail!("readlink({current:?}) failed: {}", last_err());
+        }
+        let nul = buf.iter().position(|&b| b == 0).unwrap_or(0);
+        let target = std::str::from_utf8(&buf[..nul]).unwrap_or("").to_owned();
+        if target.starts_with('/') {
+            current = target;
+        } else {
+            let parent = current.rfind('/').map(|i| &current[..i]).unwrap_or("/");
+            current = format!("{}/{}", parent.trim_end_matches('/'), target);
+        }
+    }
+    bail!("symlink loop or depth > 8: {path:?}")
+}
+
 pub fn cat(mt: &MountArgs, path: &str) -> Result<()> {
     use std::io::Write;
 
     let m = Mount::open(mt)?;
-    let cp = CString::new(path).context("path contains NUL byte")?;
+    let resolved = resolve_symlink(&m, path)?;
+    let cp = CString::new(resolved.as_str()).context("path contains NUL byte")?;
 
     let mut attr: fs_ext4_attr_t = unsafe { std::mem::zeroed() };
     if unsafe { fs_ext4_stat(m.fs, cp.as_ptr(), &mut attr) } != 0 {
-        bail!("stat({path:?}) failed: {}", last_err());
+        bail!("stat({resolved:?}) failed: {}", last_err());
     }
     if attr.size == 0 {
         return Ok(());
@@ -273,7 +303,7 @@ pub fn cat(mt: &MountArgs, path: &str) -> Result<()> {
             )
         };
         if n < 0 {
-            bail!("read_file({path:?}) failed: {}", last_err());
+            bail!("read_file({resolved:?}) failed: {}", last_err());
         }
         if n == 0 {
             break;
