@@ -121,6 +121,21 @@ host_image_path="$host_image_dir/$run_id/$image_file"
 }
 echo "[test-mount] image built: $host_image_path ($(du -sh "$host_image_path" | cut -f1))"
 
+# ── Kill any stale ext4.exe on the VM ────────────────────────────────────────
+# A stale ext4.exe (from a previous test-mount that wasn't cleanly unmounted)
+# holds a WinFsp filesystem object. A second instance then fails with
+# STATUS_OBJECT_NAME_COLLISION (0xD0000035) when calling
+# FspFileSystemSetMountPoint, even to a fresh directory. Kill first, always.
+#
+# Also holds the image file open, so kill BEFORE sftp upload too.
+echo "[test-mount] killing stale ext4.exe on VM (if any)..."
+ssh "${key_opts[@]+"${key_opts[@]}"}" \
+    -o BatchMode=yes \
+    -o ConnectTimeout=10 \
+    "$vm_host" \
+    'cmd.exe /C "taskkill /F /IM ext4.exe 2>nul & echo ok"' 2>/dev/null || true
+sleep 2   # let WinFsp teardown + file handles release
+
 # ── Upload image to Windows VM ────────────────────────────────────────────────
 # macOS scp (OpenSSH 9+) uses the SFTP subsystem but mishandles absolute
 # Windows paths; use `sftp -b` with a leading "/" so the SFTP server sees
@@ -137,12 +152,11 @@ echo "[test-mount] VM image: $vm_image_path"
 
 # ── Create mount-point directory on VM ───────────────────────────────────────
 # Use a directory mount rather than a drive letter: WinFsp reparse-point
-# mounts are visible across all Windows sessions; drive letters are
-# per-logon-session and vanish when browsed from a different SSH connection.
+# mounts are visible across all Windows sessions (Explorer, CMD, RDP);
+# drive letters are per-logon-session and vanish from other SSH connections.
 #
-# Use run_id in the path so each invocation gets a fresh name — the WinFsp
-# kernel driver holds stale entries for force-killed mounts, so reusing the
-# same path returns "Object Name already exists" until a reboot.
+# Use run_id in the path for uniqueness. Any stale WinFsp state from a
+# force-killed previous mount is cleared by the ext4.exe kill above.
 vm_mnt_dir="$vm_workdir/mnt/$run_id"
 vm_mnt_dir_win="${vm_mnt_dir//\//\\}"
 echo "[test-mount] creating mount directory on VM: $vm_mnt_dir_win"
@@ -150,14 +164,26 @@ ssh "${key_opts[@]+"${key_opts[@]}"}" \
     -o BatchMode=yes \
     -o ConnectTimeout=10 \
     "$vm_host" \
-    "powershell -NoProfile -NonInteractive -Command \"New-Item -ItemType Directory -Path '$vm_mnt_dir_win' -Force | Out-Null\""
+    "cmd.exe /C \"mkdir $vm_mnt_dir_win 2>nul & echo ok\"" 2>/dev/null || true
 
 # ── Mount on Windows VM ───────────────────────────────────────────────────────
-# Run ext4.exe mount in the foreground of a background SSH session.
+# Use cmd.exe /C to launch ext4.exe — the Windows SSH default shell is
+# PowerShell 7, which parses quoted arguments differently and rejects the
+# bare `binary mount image --drive dir` form with "Unexpected token" errors.
+# cmd.exe passes the quoted string to CreateProcess unchanged.
+#
+# Paths are converted to backslash form for cmd.exe. No per-argument quoting
+# needed as long as the workdir has no spaces (enforced by .test-env setup).
+#
 # nohup + disown detach the SSH job from this script's process group so it
-# survives after the script exits. test-unmount kills this PID to tear down.
-binary="$vm_workdir/target/release/ext4.exe"
-mount_cmd="$binary mount $vm_image_path --drive $vm_mnt_dir ${EXTRA_FLAGS[*]+"${EXTRA_FLAGS[*]}"}"
+# survives after the script exits. test-unmount kills ext4.exe directly via
+# SSH to tear down the WinFsp mount.
+binary_win="${vm_workdir//\//\\}\\target\\release\\ext4.exe"
+image_win="${vm_image_path//\//\\}"
+mnt_win="$vm_mnt_dir_win"
+extra="${EXTRA_FLAGS[*]+"${EXTRA_FLAGS[*]}"}"
+
+mount_cmd="cmd.exe /C \"$binary_win mount $image_win --drive $mnt_win $extra\""
 
 echo "[test-mount] mounting at $vm_mnt_dir_win ..."
 
@@ -169,7 +195,7 @@ nohup ssh "${key_opts[@]+"${key_opts[@]}"}" \
     "$mount_cmd" \
     > "$mount_log" 2>&1 &
 ssh_pid=$!
-disown "$ssh_pid"
+disown "$ssh_pid" 2>/dev/null || true
 
 # Wait up to 30 s for the driver to print its ready line.
 echo "[test-mount] waiting for 'ext4 mounted at' signal..."
@@ -209,8 +235,14 @@ MOUNT_LOG=$mount_log
 EOF
 
 echo ""
-echo "  Mounted at: $vm_mnt_dir_win"
-echo "  Browse it in Explorer or CMD on the Windows VM."
+echo "  ext4 ($SCENARIO) is mounted on the Windows VM."
+echo ""
+echo "  Folder path (navigate here in Explorer or CMD):"
+echo "    $vm_mnt_dir_win"
+echo ""
+echo "  For a drive letter visible in Explorer, run from your RDP/console CMD:"
+echo "    subst E: $vm_mnt_dir_win"
+echo "  (change E to any free letter; run  subst E: /D  to remove it after unmounting)"
 echo ""
 echo "  Live log: tail -f $mount_log"
 echo "  Unmount:  bash scripts/test-unmount"

@@ -20,25 +20,37 @@ source "$state_file"
 
 echo "[test-unmount] unmounting $SCENARIO (${VM_MOUNT_DIR_WIN:-$SCENARIO})"
 
-# Kill the SSH background session → ext4.exe dies → WinFsp removes the reparse point.
-if [[ -n "${SSH_PID:-}" ]] && kill -0 "$SSH_PID" 2>/dev/null; then
-    kill "$SSH_PID"
-    echo "[test-unmount] SSH session terminated (pid=$SSH_PID)"
-    sleep 2   # brief quiesce for WinFsp teardown
-else
-    echo "[test-unmount] SSH session already gone (pid=${SSH_PID:-?})"
-fi
+_get() { grep "^$1=" "$repo_root/.test-env" 2>/dev/null | head -1 | cut -d= -f2-; }
+ssh_key=$(_get SSH_KEY)
+key_opts=()
+[[ -n "$ssh_key" && -f "$ssh_key" ]] && key_opts=(-i "$ssh_key" -o IdentitiesOnly=yes)
 
-# Remove the VM-side mount directory (WinFsp leaves it; clean it up).
-if [[ -n "${VM_MOUNT_DIR_WIN:-}" && -n "${VM_HOST:-}" ]]; then
-    _get() { grep "^$1=" "$repo_root/.test-env" 2>/dev/null | head -1 | cut -d= -f2-; }
-    ssh_key=$(_get SSH_KEY)
-    key_opts=()
-    [[ -n "$ssh_key" && -f "$ssh_key" ]] && key_opts=(-i "$ssh_key" -o IdentitiesOnly=yes)
+# Kill ext4.exe on the VM directly — this is the definitive teardown path.
+# Killing the SSH PID alone is unreliable: the SSH client may already be
+# gone (e.g. after a reboot, or if test-mount's shell exited), yet ext4.exe
+# keeps running because it was nohup'd. Kill it explicitly via SSH first.
+if [[ -n "${VM_HOST:-}" ]]; then
     ssh "${key_opts[@]+"${key_opts[@]}"}" \
         -o BatchMode=yes -o ConnectTimeout=10 \
         "$VM_HOST" \
-        "powershell -NoProfile -NonInteractive -Command \"Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '$VM_MOUNT_DIR_WIN'\"" 2>/dev/null || true
+        'cmd.exe /C "taskkill /F /IM ext4.exe 2>nul & echo ok"' 2>/dev/null || true
+    echo "[test-unmount] killed ext4.exe on VM"
+    sleep 2   # WinFsp tears down the reparse point asynchronously
+fi
+
+# Also kill the local SSH background job if it's still alive.
+if [[ -n "${SSH_PID:-}" ]] && kill -0 "$SSH_PID" 2>/dev/null; then
+    kill "$SSH_PID" 2>/dev/null || true
+    echo "[test-unmount] SSH session terminated (pid=$SSH_PID)"
+fi
+
+# Remove the VM-side mount directory. WinFsp removes the reparse point
+# when ext4.exe exits but leaves the directory; clean it up.
+if [[ -n "${VM_MOUNT_DIR_WIN:-}" && -n "${VM_HOST:-}" ]]; then
+    ssh "${key_opts[@]+"${key_opts[@]}"}" \
+        -o BatchMode=yes -o ConnectTimeout=10 \
+        "$VM_HOST" \
+        "cmd.exe /C \"rmdir /S /Q \\\"$VM_MOUNT_DIR_WIN\\\" 2>nul & echo ok\"" 2>/dev/null || true
     echo "[test-unmount] removed VM mount dir: $VM_MOUNT_DIR_WIN"
 fi
 
