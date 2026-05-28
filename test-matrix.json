@@ -827,6 +827,89 @@
       ],
       "image_type": "basic"
     },
+    "win-htree-listing": {
+      "status": "pending",
+      "image": "ext4-htree.img",
+      "_attempts": [],
+      "_notes": "Verify WinFsp can enumerate an htree-indexed directory with 258 entries (.+..+256 files) via win-ls-via-mount. Pairs with htree-listing (CLI path) to confirm the driver uses the same iterator.",
+      "recipe": [
+        {
+          "op": "build-ext4-image"
+        },
+        {
+          "op": "ship-to-vm",
+          "src": "{image_dir}/{run_id}/ext4-htree.img",
+          "dest": "{vm.workdir}/ext4-htree.img"
+        },
+        {
+          "op": "win-ls-via-mount",
+          "path": "/bigdir",
+          "expect_names_csv": "__none__",
+          "expect_count": "258",
+          "image_path": "{vm.workdir}/ext4-htree.img",
+          "drive": "Z",
+          "rw_flag": "__none__",
+          "extra": "__none__"
+        }
+      ],
+      "image_type": "htree"
+    },
+    "win-inline-data-cat": {
+      "status": "pending",
+      "image": "ext4-inline.img",
+      "_attempts": [],
+      "_notes": "Read tiny.txt (12 bytes, stored inline in the inode) via WinFsp mount. Confirms the driver handles inline-data extents through the normal read path.",
+      "recipe": [
+        {
+          "op": "build-ext4-image"
+        },
+        {
+          "op": "ship-to-vm",
+          "src": "{image_dir}/{run_id}/ext4-inline.img",
+          "dest": "{vm.workdir}/ext4-inline.img"
+        },
+        {
+          "op": "win-cat-via-mount",
+          "path": "/tiny.txt",
+          "expect_content": "__none__",
+          "expect_size": "12",
+          "image_path": "{vm.workdir}/ext4-inline.img",
+          "drive": "Z",
+          "rw_flag": "__none__",
+          "expect_sha256": "4fa141db5636666c4ba3402bcb80367f847a92174fce57f2b92e912af4411566",
+          "extra": "__none__"
+        }
+      ],
+      "image_type": "inline"
+    },
+    "win-deep-extents-cat": {
+      "status": "pending",
+      "image": "ext4-deep-extents.img",
+      "_attempts": [],
+      "_notes": "Read dense.txt (13 bytes, backed by a deeper extent tree) via WinFsp mount. Pairs with deep-extents-cat (CLI path) to confirm the driver handles multi-level extent lookups through the WinFsp read callback.",
+      "recipe": [
+        {
+          "op": "build-ext4-image"
+        },
+        {
+          "op": "ship-to-vm",
+          "src": "{image_dir}/{run_id}/ext4-deep-extents.img",
+          "dest": "{vm.workdir}/ext4-deep-extents.img"
+        },
+        {
+          "op": "win-cat-via-mount",
+          "path": "/dense.txt",
+          "expect_content": "__none__",
+          "expect_size": "13",
+          "image_path": "{vm.workdir}/ext4-deep-extents.img",
+          "drive": "Z",
+          "rw_flag": "__none__",
+          "expect_sha256": "48b29839ecd2a7f7da1326b867961ca050e46fa4035a5f1c7eee28b401646650",
+          "extra": "__none__"
+        }
+      ],
+      "image_type": "deep_extents"
+    },
     "rw-write-durability": {
       "status": "pending",
       "image": "ext4-basic.img",
