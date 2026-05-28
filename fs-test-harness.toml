@@ -169,6 +169,11 @@ host = "host"
 command = "bash vendor/fs-test-harness/scripts/host/verify-getxattr.sh --binary {binary} {image_dir}/{run_id}/{scenario.image} {step.path} {step.name} {step.expect_args}"
 expect_exit = 0
 
+[ops.verify-readlink]
+host = "host"
+command = "bash vendor/fs-test-harness/scripts/host/verify-readlink.sh --binary {binary} {image_dir}/{run_id}/{scenario.image} {step.path} {step.expect_args}"
+expect_exit = 0
+
 # ============================================================
 # Win-side (vm) ops — Phase B
 # ============================================================

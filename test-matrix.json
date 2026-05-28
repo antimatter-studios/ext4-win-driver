@@ -844,6 +844,23 @@
       ],
       "image_type": "basic"
     },
+    "basic-readlink": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "_attempts": [],
+      "_notes": "Verify CLI readlink prints the correct target for link.txt (-> test.txt). Pairs with basic-stat-symlink which verifies the symlink inode metadata.",
+      "recipe": [
+        {
+          "op": "build-ext4-image"
+        },
+        {
+          "op": "verify-readlink",
+          "path": "/link.txt",
+          "expect_args": "'--expect-target' 'test.txt'"
+        }
+      ],
+      "image_type": "basic"
+    },
     "rw-overwrite-durability": {
       "status": "pending",
       "image": "ext4-basic.img",
