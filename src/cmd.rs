@@ -587,3 +587,64 @@ pub fn getxattr(mt: &MountArgs, path: &str, name: &str) -> Result<()> {
     std::io::stdout().lock().write_all(&buf[..n as usize])?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// setxattr / removexattr
+// ---------------------------------------------------------------------------
+
+pub fn setxattr(mt: &MountArgs, path: &str, name: &str, value: &[u8]) -> Result<()> {
+    let m = Mount::open_rw(mt)?;
+    let cp = CString::new(path).context("path contains NUL byte")?;
+    let cn = CString::new(name).context("name contains NUL byte")?;
+    let rc = unsafe {
+        fs_ext4_setxattr(
+            m.fs,
+            cp.as_ptr(),
+            cn.as_ptr(),
+            value.as_ptr() as *const c_void,
+            value.len(),
+        )
+    };
+    if rc != 0 {
+        bail!("setxattr({path:?}, {name:?}) failed: {}", last_err());
+    }
+    Ok(())
+}
+
+pub fn removexattr(mt: &MountArgs, path: &str, name: &str) -> Result<()> {
+    let m = Mount::open_rw(mt)?;
+    let cp = CString::new(path).context("path contains NUL byte")?;
+    let cn = CString::new(name).context("name contains NUL byte")?;
+    let rc = unsafe { fs_ext4_removexattr(m.fs, cp.as_ptr(), cn.as_ptr()) };
+    if rc != 0 {
+        bail!("removexattr({path:?}, {name:?}) failed: {}", last_err());
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// symlink / link
+// ---------------------------------------------------------------------------
+
+pub fn symlink(mt: &MountArgs, target: &str, linkpath: &str) -> Result<()> {
+    let m = Mount::open_rw(mt)?;
+    let ct = CString::new(target).context("target contains NUL byte")?;
+    let cl = CString::new(linkpath).context("linkpath contains NUL byte")?;
+    // fs_ext4_symlink returns the new inode number (>0) on success, 0 on failure.
+    let ino = unsafe { fs_ext4_symlink(m.fs, ct.as_ptr(), cl.as_ptr()) };
+    if ino == 0 {
+        bail!("symlink({target:?} -> {linkpath:?}) failed: {}", last_err());
+    }
+    Ok(())
+}
+
+pub fn link(mt: &MountArgs, src: &str, dst: &str) -> Result<()> {
+    let m = Mount::open_rw(mt)?;
+    let cs = CString::new(src).context("src contains NUL byte")?;
+    let cd = CString::new(dst).context("dst contains NUL byte")?;
+    let rc = unsafe { fs_ext4_link(m.fs, cs.as_ptr(), cd.as_ptr()) };
+    if rc != 0 {
+        bail!("link({src:?} -> {dst:?}) failed: {}", last_err());
+    }
+    Ok(())
+}

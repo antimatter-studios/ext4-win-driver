@@ -148,6 +148,48 @@ enum Cmd {
         path: String,
         name: String,
     },
+    /// Set (create or replace) an extended attribute. The value is taken from
+    /// the `--value` flag (UTF-8 string) or from stdin when `--stdin` is set.
+    /// The name must include its namespace prefix (e.g. `user.myattr`).
+    Setxattr {
+        #[command(flatten)]
+        mt: MountArgs,
+        path: String,
+        name: String,
+        /// Attribute value as a UTF-8 string.
+        #[arg(long, conflicts_with = "stdin")]
+        value: Option<String>,
+        /// Read attribute value from stdin (binary-safe).
+        #[arg(long)]
+        stdin: bool,
+    },
+    /// Remove an extended attribute. The name must include its namespace prefix.
+    Removexattr {
+        #[command(flatten)]
+        mt: MountArgs,
+        path: String,
+        name: String,
+    },
+    /// Create a symbolic link. `target` is the link content (what the symlink
+    /// points at); `linkpath` is the path of the new symlink inode.
+    Symlink {
+        #[command(flatten)]
+        mt: MountArgs,
+        /// What the symlink points at (the stored target string).
+        target: String,
+        /// Path of the new symlink inode to create.
+        linkpath: String,
+    },
+    /// Create a hard link: `dst` becomes a new directory entry pointing at
+    /// the same inode as `src`.
+    Link {
+        #[command(flatten)]
+        mt: MountArgs,
+        /// Existing file path (the inode to link to).
+        src: String,
+        /// New path to create.
+        dst: String,
+    },
     /// Mount the filesystem on a Windows drive letter via WinFsp.
     /// Defaults to read-write; pass `--ro` for read-only. Requires the
     /// `mount` feature and a Windows host.
@@ -204,6 +246,20 @@ fn main() -> Result<()> {
         Cmd::Readlink { mt, path } => cmd::readlink(&mt, &path),
         Cmd::Listxattr { mt, path } => cmd::listxattr(&mt, &path),
         Cmd::Getxattr { mt, path, name } => cmd::getxattr(&mt, &path, &name),
+        Cmd::Setxattr { mt, path, name, value, stdin } => {
+            let bytes = if stdin {
+                use std::io::Read;
+                let mut buf = Vec::new();
+                std::io::stdin().read_to_end(&mut buf)?;
+                buf
+            } else {
+                value.unwrap_or_default().into_bytes()
+            };
+            cmd::setxattr(&mt, &path, &name, &bytes)
+        }
+        Cmd::Removexattr { mt, path, name } => cmd::removexattr(&mt, &path, &name),
+        Cmd::Symlink { mt, target, linkpath } => cmd::symlink(&mt, &target, &linkpath),
+        Cmd::Link { mt, src, dst } => cmd::link(&mt, &src, &dst),
         #[cfg(all(windows, feature = "mount"))]
         Cmd::Mount {
             mt,
