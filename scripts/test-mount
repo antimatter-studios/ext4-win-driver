@@ -21,9 +21,19 @@
 set -euo pipefail
 
 # ── Args ──────────────────────────────────────────────────────────────────────
-SCENARIO="${1:?usage: bash scripts/test-mount <scenario> [mount-flags…]}"
+SCENARIO="${1:?usage: bash scripts/test-mount <scenario> [drive] [mount-flags…]}"
 shift
-EXTRA_FLAGS=("$@")
+
+# Optional second arg: single drive letter (no colon).  Default: E
+DRIVE="E"
+EXTRA_FLAGS=()
+for arg in "$@"; do
+    if [[ "$arg" =~ ^[A-Za-z]$ ]]; then
+        DRIVE="${arg^^}"
+    else
+        EXTRA_FLAGS+=("$arg")
+    fi
+done
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -121,6 +131,13 @@ host_image_path="$host_image_dir/$run_id/$image_file"
 }
 echo "[test-mount] image built: $host_image_path ($(du -sh "$host_image_path" | cut -f1))"
 
+# Set volume label to the scenario name so Explorer shows a descriptive label.
+# e2label is in Alpine's e2fsprogs package (already present in the builder image).
+echo "[test-mount] setting volume label to '$SCENARIO'..."
+bash "$repo_root/scripts/builder-ssh.sh" \
+    "e2label /host/$run_id/$image_file $SCENARIO" 2>/dev/null \
+    || echo "[test-mount] warning: e2label failed — volume label not set"
+
 # ── Kill any stale ext4.exe on the VM ────────────────────────────────────────
 # A stale ext4.exe (from a previous test-mount that wasn't cleanly unmounted)
 # holds a WinFsp filesystem object. A second instance then fails with
@@ -150,72 +167,112 @@ put $host_image_path /$vm_image_path
 EOF
 echo "[test-mount] VM image: $vm_image_path"
 
-# ── Create mount-point directory on VM ───────────────────────────────────────
-# Use a directory mount rather than a drive letter: WinFsp reparse-point
-# mounts are visible across all Windows sessions (Explorer, CMD, RDP);
-# drive letters are per-logon-session and vanish from other SSH connections.
+# ── Mount via scheduled task in the user's interactive session ────────────────
+# Drive letters created by a process in the SSH logon session are invisible
+# to the user's console/VMware session (different LUID in \Sessions\N\DosDevices).
+# A Windows scheduled task with LogonType=InteractiveToken launches the process
+# inside the user's active desktop session, so the WinFsp drive letter appears
+# in Explorer exactly like a real disk.
 #
-# Use run_id in the path for uniqueness. Any stale WinFsp state from a
-# force-killed previous mount is cleared by the ext4.exe kill above.
-vm_mnt_dir="$vm_workdir/mnt/$run_id"
-vm_mnt_dir_win="${vm_mnt_dir//\//\\}"
-echo "[test-mount] creating mount directory on VM: $vm_mnt_dir_win"
-ssh "${key_opts[@]+"${key_opts[@]}"}" \
-    -o BatchMode=yes \
-    -o ConnectTimeout=10 \
-    "$vm_host" \
-    "cmd.exe /C \"mkdir $vm_mnt_dir_win 2>nul & echo ok\"" 2>/dev/null || true
+# Flow:
+#   1. Upload a task XML (sftp) → register it (schtasks /Create /XML)
+#   2. Run it immediately (schtasks /Run) → ext4.exe spawns in Session 1
+#   3. Poll a VM-side log file (sshcat) until the ready line appears
+#   4. test-unmount kills ext4.exe (taskkill) + deletes the task
 
-# ── Mount on Windows VM ───────────────────────────────────────────────────────
-# Use cmd.exe /C to launch ext4.exe — the Windows SSH default shell is
-# PowerShell 7, which parses quoted arguments differently and rejects the
-# bare `binary mount image --drive dir` form with "Unexpected token" errors.
-# cmd.exe passes the quoted string to CreateProcess unchanged.
-#
-# Paths are converted to backslash form for cmd.exe. No per-argument quoting
-# needed as long as the workdir has no spaces (enforced by .test-env setup).
-#
-# nohup + disown detach the SSH job from this script's process group so it
-# survives after the script exits. test-unmount kills ext4.exe directly via
-# SSH to tear down the WinFsp mount.
 binary_win="${vm_workdir//\//\\}\\target\\release\\ext4.exe"
 image_win="${vm_image_path//\//\\}"
-mnt_win="$vm_mnt_dir_win"
+drive_letter="${DRIVE}:"
 extra="${EXTRA_FLAGS[*]+"${EXTRA_FLAGS[*]}"}"
 
-mount_cmd="cmd.exe /C \"$binary_win mount $image_win --drive $mnt_win $extra\""
+vm_logfile_win="${vm_workdir//\//\\}\\mount-${run_id}.log"
+task_name="ext4-test-mount-${run_id}"
+task_xml_win="${vm_workdir//\//\\}\\task-${run_id}.xml"
+task_xml_fwd="$vm_workdir/task-${run_id}.xml"   # forward-slash for sftp + schtasks
+task_xml_local="/tmp/ext4-task-${run_id}.xml"
 
-echo "[test-mount] mounting at $vm_mnt_dir_win ..."
+# Write the task XML locally then upload via sftp (avoids shell quoting hell).
+# InteractiveToken = run in the user's active desktop session (Session 1).
+# No triggers section = task only runs when explicitly invoked via /Run.
+vm_user="${vm_host%%@*}"
+cat > "$task_xml_local" <<XMLEOF
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>ext4 test mount $SCENARIO</Description></RegistrationInfo>
+  <Principals>
+    <Principal id="Author">
+      <UserId>$vm_user</UserId>
+      <LogonType>InteractiveToken</LogonType>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <ExecutionTimeLimit>PT8H</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>cmd.exe</Command>
+      <Arguments>/c $binary_win mount $image_win --drive $drive_letter $extra >> $vm_logfile_win 2>&amp;1</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+XMLEOF
 
-nohup ssh "${key_opts[@]+"${key_opts[@]}"}" \
+# The XML must be UTF-16LE with a BOM for schtasks; iconv alone (-t UTF-16LE)
+# omits the BOM and schtasks rejects the file.  Prepend the BOM explicitly.
+{ printf '\xff\xfe'; iconv -f UTF-8 -t UTF-16LE "$task_xml_local"; } > "${task_xml_local}.utf16"
+
+echo "[test-mount] uploading task definition..."
+sftp "${key_opts[@]+"${key_opts[@]}"}" \
+    -o BatchMode=yes \
     -o ConnectTimeout=15 \
-    -o ServerAliveInterval=30 \
-    -o ServerAliveCountMax=10 \
-    "$vm_host" \
-    "$mount_cmd" \
-    > "$mount_log" 2>&1 &
-ssh_pid=$!
-disown "$ssh_pid" 2>/dev/null || true
+    -b - "$vm_host" <<EOF
+put ${task_xml_local}.utf16 /$task_xml_fwd
+EOF
+rm -f "$task_xml_local" "${task_xml_local}.utf16"
 
-# Wait up to 30 s for the driver to print its ready line.
+echo "[test-mount] registering and launching task (drive ${DRIVE}:) ..."
+ssh "${key_opts[@]+"${key_opts[@]}"}" \
+    -o BatchMode=yes \
+    -o ConnectTimeout=15 \
+    "$vm_host" \
+    "cmd.exe /C \"schtasks /Create /XML $task_xml_fwd /TN $task_name /F 2>&1 && schtasks /Run /TN $task_name 2>&1\""
+
+# Poll the VM-side log file for the ready line (up to 30 s).
+# Drive-letter existence checks from SSH land in a different Windows logon
+# session and can't see Session 1's drive letters, so we watch the log instead.
 echo "[test-mount] waiting for 'ext4 mounted at' signal..."
 ready=0
 for i in $(seq 1 30); do
-    if grep -q "ext4 mounted at" "$mount_log" 2>/dev/null; then
+    sleep 1
+    log_content=$(ssh "${key_opts[@]+"${key_opts[@]}"}" \
+        -o BatchMode=yes -o ConnectTimeout=10 \
+        "$vm_host" \
+        "cmd.exe /C \"type $vm_logfile_win 2>nul\"" 2>/dev/null || true)
+    if echo "$log_content" | grep -q "ext4 mounted at"; then
         ready=1; break
     fi
-    if ! kill -0 "$ssh_pid" 2>/dev/null; then
-        echo "ERROR: mount process exited before signalling ready" >&2
-        cat "$mount_log" >&2
+    if echo "$log_content" | grep -iq "^error\|failed to mount\|STATUS_"; then
+        echo "ERROR: mount failed:" >&2
+        echo "$log_content" >&2
+        ssh "${key_opts[@]+"${key_opts[@]}"}" \
+            -o BatchMode=yes -o ConnectTimeout=10 "$vm_host" \
+            "cmd.exe /C \"schtasks /Delete /TN $task_name /F 2>nul\"" 2>/dev/null || true
         exit 1
     fi
-    sleep 1
 done
 
 if [[ "$ready" -eq 0 ]]; then
     echo "ERROR: 'ext4 mounted at' not seen after 30 s" >&2
-    cat "$mount_log" >&2
-    kill "$ssh_pid" 2>/dev/null || true
+    ssh "${key_opts[@]+"${key_opts[@]}"}" \
+        -o BatchMode=yes -o ConnectTimeout=10 "$vm_host" \
+        "cmd.exe /C \"type $vm_logfile_win 2>nul\"" 2>/dev/null >&2 || true
+    ssh "${key_opts[@]+"${key_opts[@]}"}" \
+        -o BatchMode=yes -o ConnectTimeout=10 "$vm_host" \
+        "cmd.exe /C \"schtasks /Delete /TN $task_name /F 2>nul\"" 2>/dev/null || true
     exit 1
 fi
 
@@ -227,22 +284,15 @@ IMAGE_FILE=$image_file
 RUN_ID=$run_id
 HOST_IMAGE_PATH=$host_image_path
 VM_IMAGE_PATH=$vm_image_path
-VM_MOUNT_DIR=$vm_mnt_dir
-VM_MOUNT_DIR_WIN=$vm_mnt_dir_win
+DRIVE=$DRIVE
+VM_LOGFILE_WIN=$vm_logfile_win
+VM_TASK_NAME=$task_name
+VM_TASK_XML_WIN=$task_xml_win
 VM_HOST=$vm_host
-SSH_PID=$ssh_pid
-MOUNT_LOG=$mount_log
 EOF
 
 echo ""
-echo "  ext4 ($SCENARIO) is mounted on the Windows VM."
+echo "  Drive ${DRIVE}: is live in Explorer on the Windows VM."
+echo "  Browse it with:  This PC → ${DRIVE}: drive"
 echo ""
-echo "  Folder path (navigate here in Explorer or CMD):"
-echo "    $vm_mnt_dir_win"
-echo ""
-echo "  For a drive letter visible in Explorer, run from your RDP/console CMD:"
-echo "    subst E: $vm_mnt_dir_win"
-echo "  (change E to any free letter; run  subst E: /D  to remove it after unmounting)"
-echo ""
-echo "  Live log: tail -f $mount_log"
 echo "  Unmount:  bash scripts/test-unmount"

@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Unmount a directory left running by scripts/test-mount.
+# Unmount a drive left running by scripts/test-mount.
 #
-# Kills the background SSH session that keeps ext4.exe alive; WinFsp
-# cleans up the reparse point automatically when the driver process exits.
-# Also removes the host-side disk image and the VM mount directory.
+# Kills ext4.exe (via SSH taskkill) so WinFsp removes the drive letter,
+# then deletes the scheduled task and cleans up VM-side and host-side files.
 
 set -euo pipefail
 
@@ -18,53 +17,51 @@ state_file="$repo_root/.test-mount-state"
 # shellcheck disable=SC1090
 source "$state_file"
 
-echo "[test-unmount] unmounting $SCENARIO (${VM_MOUNT_DIR_WIN:-$SCENARIO})"
+echo "[test-unmount] unmounting ${DRIVE:-?}: ($SCENARIO)"
 
 _get() { grep "^$1=" "$repo_root/.test-env" 2>/dev/null | head -1 | cut -d= -f2-; }
 ssh_key=$(_get SSH_KEY)
 key_opts=()
 [[ -n "$ssh_key" && -f "$ssh_key" ]] && key_opts=(-i "$ssh_key" -o IdentitiesOnly=yes)
 
-# Kill ext4.exe on the VM directly — this is the definitive teardown path.
-# Killing the SSH PID alone is unreliable: the SSH client may already be
-# gone (e.g. after a reboot, or if test-mount's shell exited), yet ext4.exe
-# keeps running because it was nohup'd. Kill it explicitly via SSH first.
-if [[ -n "${VM_HOST:-}" ]]; then
+_ssh() {
     ssh "${key_opts[@]+"${key_opts[@]}"}" \
         -o BatchMode=yes -o ConnectTimeout=10 \
-        "$VM_HOST" \
-        'cmd.exe /C "taskkill /F /IM ext4.exe 2>nul & echo ok"' 2>/dev/null || true
-    echo "[test-unmount] killed ext4.exe on VM"
-    sleep 2   # WinFsp tears down the reparse point asynchronously
+        "$VM_HOST" "$@" 2>/dev/null || true
+}
+
+# Kill ext4.exe — this is what actually dismounts the WinFsp drive.
+# taskkill works across sessions, so it terminates ext4.exe even if it was
+# launched in the user's interactive session by the scheduled task.
+_ssh 'cmd.exe /C "taskkill /F /IM ext4.exe 2>nul & echo ok"'
+echo "[test-unmount] killed ext4.exe on VM"
+sleep 2   # WinFsp removes the drive letter asynchronously
+
+# Delete the scheduled task.
+if [[ -n "${VM_TASK_NAME:-}" ]]; then
+    _ssh "cmd.exe /C \"schtasks /Delete /TN $VM_TASK_NAME /F 2>nul & echo ok\""
+    echo "[test-unmount] deleted scheduled task: $VM_TASK_NAME"
 fi
 
-# Also kill the local SSH background job if it's still alive.
-if [[ -n "${SSH_PID:-}" ]] && kill -0 "$SSH_PID" 2>/dev/null; then
-    kill "$SSH_PID" 2>/dev/null || true
-    echo "[test-unmount] SSH session terminated (pid=$SSH_PID)"
+# Remove VM-side task XML and log file.
+for f in "${VM_TASK_XML_WIN:-}" "${VM_LOGFILE_WIN:-}"; do
+    [[ -n "$f" ]] || continue
+    _ssh "cmd.exe /C \"del /F /Q \\\"$f\\\" 2>nul & echo ok\""
+done
+
+# Remove the VM-side image.
+if [[ -n "${VM_IMAGE_PATH:-}" ]]; then
+    img_win="${VM_IMAGE_PATH//\//\\}"
+    _ssh "cmd.exe /C \"del /F /Q \\\"$img_win\\\" 2>nul & echo ok\""
+    echo "[test-unmount] removed VM image: $VM_IMAGE_PATH"
 fi
 
-# Remove the VM-side mount directory. WinFsp removes the reparse point
-# when ext4.exe exits but leaves the directory; clean it up.
-if [[ -n "${VM_MOUNT_DIR_WIN:-}" && -n "${VM_HOST:-}" ]]; then
-    ssh "${key_opts[@]+"${key_opts[@]}"}" \
-        -o BatchMode=yes -o ConnectTimeout=10 \
-        "$VM_HOST" \
-        "cmd.exe /C \"rmdir /S /Q \\\"$VM_MOUNT_DIR_WIN\\\" 2>nul & echo ok\"" 2>/dev/null || true
-    echo "[test-unmount] removed VM mount dir: $VM_MOUNT_DIR_WIN"
-fi
-
-# Remove host-side image and its per-run directory.
+# Remove host-side image.
 if [[ -f "${HOST_IMAGE_PATH:-}" ]]; then
     rm -f "$HOST_IMAGE_PATH"
     rmdir "$(dirname "$HOST_IMAGE_PATH")" 2>/dev/null || true
     echo "[test-unmount] removed host image: $HOST_IMAGE_PATH"
 fi
 
-# Remove the log file.
-rm -f "${MOUNT_LOG:-}"
-
-# Remove state.
 rm -f "$state_file"
-
-echo "[test-unmount] done"
+echo "[test-unmount] done — drive ${DRIVE:-?}: unmounted"
