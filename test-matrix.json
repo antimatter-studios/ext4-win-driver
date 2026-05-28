@@ -665,6 +665,140 @@
       ],
       "image_type": "basic"
     },
+    "rw-write-in-subdir": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "_attempts": [],
+      "_notes": "Write a new file inside an existing subdirectory via WinFsp mount and read it back. Tests that open/create/write/read work correctly for non-root paths.",
+      "recipe": [
+        {
+          "op": "build-ext4-image"
+        },
+        {
+          "op": "ship-to-vm",
+          "src": "{image_dir}/{run_id}/ext4-basic.img",
+          "dest": "{vm.workdir}/ext4-basic.img"
+        },
+        {
+          "op": "win-write",
+          "path": "/subdir/win-new.txt",
+          "content": "written in subdir",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-cat-via-mount",
+          "path": "/subdir/win-new.txt",
+          "expect_content": "written in subdir",
+          "expect_size": "17",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_sha256": "__none__",
+          "extra": "__none__"
+        }
+      ],
+      "image_type": "basic"
+    },
+    "rw-mkdir-in-subdir": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "_attempts": [],
+      "_notes": "mkdir inside an existing subdirectory, then verify via ls and remove. Tests full dir lifecycle for non-root paths.",
+      "recipe": [
+        {
+          "op": "build-ext4-image"
+        },
+        {
+          "op": "ship-to-vm",
+          "src": "{image_dir}/{run_id}/ext4-basic.img",
+          "dest": "{vm.workdir}/ext4-basic.img"
+        },
+        {
+          "op": "win-mkdir",
+          "path": "/subdir/new-nested",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-ls-via-mount",
+          "path": "/subdir",
+          "expect_names_csv": ".,..,nested.txt,new-nested",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_count": "__none__",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-rmdir",
+          "path": "/subdir/new-nested",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-ls-via-mount",
+          "path": "/subdir",
+          "expect_names_csv": ".,..,nested.txt",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_count": "__none__",
+          "extra": "__none__"
+        }
+      ],
+      "image_type": "basic"
+    },
+    "rw-rename-dir": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "_attempts": [],
+      "_notes": "Create a directory, rename it, verify under new name via ls. Tests WinFsp rename dispatch for directories.",
+      "recipe": [
+        {
+          "op": "build-ext4-image"
+        },
+        {
+          "op": "ship-to-vm",
+          "src": "{image_dir}/{run_id}/ext4-basic.img",
+          "dest": "{vm.workdir}/ext4-basic.img"
+        },
+        {
+          "op": "win-mkdir",
+          "path": "/before-rename",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-rename",
+          "from": "/before-rename",
+          "to": "/after-rename",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "win-ls-via-mount",
+          "path": "/",
+          "expect_names_csv": ".,..,after-rename,link.txt,lost+found,subdir,test.txt",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "expect_count": "__none__",
+          "extra": "__none__"
+        }
+      ],
+      "image_type": "basic"
+    },
     "watch-volume-arrival-marker": {
       "status": "blocked-needs-event-injection-harness",
       "image": "",
