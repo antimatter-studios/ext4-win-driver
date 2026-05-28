@@ -407,6 +407,62 @@ mod winfsp_adapter {
         (FILETIME_EPOCH_OFFSET_SEC.saturating_add(secs as u64)).saturating_mul(10_000_000)
     }
 
+    /// Apply a `FILE_FULL_EA_INFORMATION` buffer to `path` on `fs`.
+    ///
+    /// Parses the linked-list of EA entries and calls `fs_ext4_setxattr` for
+    /// each non-empty entry, or `fs_ext4_removexattr` for zero-length entries.
+    /// Skips entries whose names contain NUL bytes (malformed); returns the
+    /// first `fs_ext4_setxattr` error, if any.
+    fn apply_ea_buffer(
+        fs: *mut fs_ext4_fs_t,
+        cp: &CString,
+        buffer: &[u8],
+    ) -> FspResult<()> {
+        let mut pos = 0usize;
+        loop {
+            if pos + 8 > buffer.len() {
+                break;
+            }
+            let next_offset =
+                u32::from_le_bytes(buffer[pos..pos + 4].try_into().unwrap()) as usize;
+            let name_len = buffer[pos + 5] as usize;
+            let val_len =
+                u16::from_le_bytes(buffer[pos + 6..pos + 8].try_into().unwrap()) as usize;
+            let name_start = pos + 8;
+            let name_end = name_start + name_len;
+            let val_start = name_end + 1;
+            let val_end = val_start + val_len;
+            if val_end > buffer.len() {
+                break;
+            }
+            if let Ok(cn) = CString::new(&buffer[name_start..name_end]) {
+                let value = &buffer[val_start..val_end];
+                if val_len == 0 {
+                    unsafe { fs_ext4_removexattr(fs, cp.as_ptr(), cn.as_ptr()) };
+                } else {
+                    let rc = unsafe {
+                        fs_ext4_setxattr(
+                            fs,
+                            cp.as_ptr(),
+                            cn.as_ptr(),
+                            value.as_ptr() as *const c_void,
+                            value.len(),
+                        )
+                    };
+                    if rc != 0 {
+                        let errno = unsafe { fs_ext4_last_errno() };
+                        return Err(errno_to_status(errno).into());
+                    }
+                }
+            }
+            if next_offset == 0 {
+                break;
+            }
+            pos += next_offset;
+        }
+        Ok(())
+    }
+
     /// `\foo\bar` (UTF-16) → `/foo/bar` (UTF-8). The empty path becomes "/".
     fn winpath_to_unix(name: &U16CStr) -> Result<String> {
         let s = name.to_string().context("path is invalid UTF-16")?;
@@ -873,6 +929,13 @@ mod winfsp_adapter {
                 return Err(errno_to_status(errno).into());
             }
 
+            // Apply any EA data the caller supplied at creation time.
+            if let Some(ea) = _extra_buffer {
+                if !_extra_buffer_is_reparse_point {
+                    apply_ea_buffer(self.mount.fs, &cp, ea)?;
+                }
+            }
+
             let attr = stat_path(self.mount.fs, &unix_path)?;
             populate_file_info(&attr, file_info.as_mut());
             Ok(Ext4FileContext {
@@ -1320,55 +1383,7 @@ mod winfsp_adapter {
                 return Err(STATUS_OBJECT_NAME_NOT_FOUND.into());
             };
 
-            let mut pos = 0usize;
-            loop {
-                if pos + 8 > buffer.len() {
-                    break;
-                }
-                let next_offset =
-                    u32::from_le_bytes(buffer[pos..pos + 4].try_into().unwrap()) as usize;
-                let name_len = buffer[pos + 5] as usize;
-                let val_len =
-                    u16::from_le_bytes(buffer[pos + 6..pos + 8].try_into().unwrap()) as usize;
-
-                let name_start = pos + 8;
-                let name_end = name_start + name_len;
-                let val_start = name_end + 1; // skip NUL terminator
-                let val_end = val_start + val_len;
-
-                if val_end > buffer.len() {
-                    break;
-                }
-
-                let name_bytes = &buffer[name_start..name_end];
-                let value = &buffer[val_start..val_end];
-
-                if let Ok(cn) = CString::new(name_bytes) {
-                    if val_len == 0 {
-                        // Zero-length value means delete the attribute.
-                        unsafe { fs_ext4_removexattr(self.mount.fs, cp.as_ptr(), cn.as_ptr()) };
-                    } else {
-                        let rc = unsafe {
-                            fs_ext4_setxattr(
-                                self.mount.fs,
-                                cp.as_ptr(),
-                                cn.as_ptr(),
-                                value.as_ptr() as *const c_void,
-                                value.len(),
-                            )
-                        };
-                        if rc != 0 {
-                            let errno = unsafe { fs_ext4_last_errno() };
-                            return Err(errno_to_status(errno).into());
-                        }
-                    }
-                }
-
-                if next_offset == 0 {
-                    break;
-                }
-                pos += next_offset;
-            }
+            apply_ea_buffer(self.mount.fs, &cp, buffer)?;
 
             // Refresh file_info after EA mutation.
             if let Ok(attr) = stat_path(self.mount.fs, &path) {
