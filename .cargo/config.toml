@@ -11,3 +11,10 @@ rustflags = ["-C", "target-feature=+crt-static"]
 
 [target.x86_64-pc-windows-gnullvm]
 rustflags = ["-C", "target-feature=+crt-static"]
+
+# NOTE: do NOT install MinGW (x86_64-w64-mingw32-gcc) to cross-compile this
+# project. We target x86_64-pc-windows-gnullvm (LLVM MinGW), not the GNU
+# MinGW triple. Adding a GNU linker here will not work for gnullvm targets
+# and causes confusing "can't find crate for std" errors when the wrong
+# toolchain is on PATH. Use llvm-mingw and install the gnullvm rustup target
+# (`rustup target add x86_64-pc-windows-gnullvm`) instead.
