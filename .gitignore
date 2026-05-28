@@ -4,5 +4,6 @@
 .DS_Store
 .test-env
 test-diagnostics/
+*.img
 .claude/
 .history/
