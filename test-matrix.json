@@ -839,6 +839,42 @@
       ],
       "image_type": "basic"
     },
+    "rw-overwrite-durability": {
+      "status": "pending",
+      "image": "ext4-basic.img",
+      "_attempts": [],
+      "_notes": "Overwrite test.txt (originally 16 bytes) with 9-byte content via WinFsp, ship image back, verify with native ext4 CLI. Confirms truncate + rewrite path is durable: old bytes do not bleed through after unmount.",
+      "recipe": [
+        {
+          "op": "build-ext4-image"
+        },
+        {
+          "op": "ship-to-vm",
+          "src": "{image_dir}/{run_id}/ext4-basic.img",
+          "dest": "{vm.workdir}/ext4-basic.img"
+        },
+        {
+          "op": "win-write",
+          "path": "/test.txt",
+          "content": "OVERWRITE",
+          "image_path": "{vm.workdir}/ext4-basic.img",
+          "drive": "Z",
+          "rw_flag": "--rw",
+          "extra": "__none__"
+        },
+        {
+          "op": "ship-to-host",
+          "src": "{vm.workdir}/ext4-basic.img",
+          "dest": "{image_dir}/{run_id}/ext4-basic.img"
+        },
+        {
+          "op": "verify-cat",
+          "path": "/test.txt",
+          "expect_args": "'--expect-size' '9' '--expect-sha256' '3426c0c5bc8403ffdec320ad65b6f25b75fc3e3dcf924fac7e00bc8ddc2b995c'"
+        }
+      ],
+      "image_type": "basic"
+    },
     "win-htree-listing": {
       "status": "pending",
       "image": "ext4-htree.img",
