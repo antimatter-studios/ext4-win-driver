@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+#
+# Pre-commit hook — runs the two fast checks CI enforces, so a push
+# doesn't fail on something we could have caught locally in <30s.
+#
+# Enable once per clone:
+#   git config core.hooksPath .githooks
+# or:
+#   ./scripts/install-hooks.sh
+#
+# Skip for a single WIP commit (use sparingly):
+#   git commit --no-verify
+#
+# NOTE: we deliberately don't run `cargo test` here — the test suite
+# needs qemu-system-x86 + root + generated disk images and takes
+# minutes. That stays in CI. Fmt + clippy are the ones that have bitten
+# us before ("release: 0.1.2" shipped with an unformatted test line;
+# CI caught it but only after the push).
+
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "[pre-commit] cargo fmt --check"
+if ! cargo fmt --check; then
+    echo
+    echo "[pre-commit] rustfmt would reformat the above files."
+    echo "[pre-commit] Fix with: cargo fmt"
+    exit 1
+fi
+
+echo "[pre-commit] cargo clippy --all-targets -- -D warnings"
+cargo clippy --all-targets -- -D warnings
+
+echo "[pre-commit] OK"
