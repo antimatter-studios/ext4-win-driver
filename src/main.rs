@@ -230,6 +230,31 @@ enum Cmd {
         src: String,
         dst: String,
     },
+    /// Create a file if it doesn't exist (like `touch`). Does not modify
+    /// an existing file.
+    Touch {
+        #[command(flatten)]
+        mt: MountArgs,
+        path: String,
+    },
+    /// Change file permissions. `mode` is an octal integer (e.g. 644).
+    Chmod {
+        #[command(flatten)]
+        mt: MountArgs,
+        path: String,
+        /// Octal mode (e.g. 755). Parsed as decimal by the shell; prefix
+        /// with `0o` for an explicit octal literal if your shell allows it,
+        /// or pass the decimal equivalent (e.g. 493 for 0755).
+        mode: u32,
+    },
+    /// Change file owner / group.
+    Chown {
+        #[command(flatten)]
+        mt: MountArgs,
+        path: String,
+        uid: u32,
+        gid: u32,
+    },
     /// Mount the filesystem on a Windows drive letter via WinFsp.
     /// Defaults to read-write; pass `--ro` for read-only. Requires the
     /// `mount` feature and a Windows host.
@@ -306,6 +331,9 @@ fn main() -> Result<()> {
         Cmd::Unlink { mt, path } => cmd::unlink(&mt, &path),
         Cmd::Truncate { mt, path, size } => cmd::truncate(&mt, &path, size),
         Cmd::Rename { mt, src, dst } => cmd::rename(&mt, &src, &dst),
+        Cmd::Touch { mt, path } => cmd::touch(&mt, &path),
+        Cmd::Chmod { mt, path, mode } => cmd::chmod(&mt, &path, mode),
+        Cmd::Chown { mt, path, uid, gid } => cmd::chown(&mt, &path, uid, gid),
         #[cfg(all(windows, feature = "mount"))]
         Cmd::Mount {
             mt,
