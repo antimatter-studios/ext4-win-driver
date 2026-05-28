@@ -659,9 +659,17 @@ pub fn write_file(mt: &MountArgs, path: &str) -> Result<()> {
     let cp = CString::new(path).context("path contains NUL byte")?;
     let mut data = Vec::new();
     std::io::stdin().read_to_end(&mut data).context("reading stdin")?;
-    // Use pwrite at offset 0 to overwrite; fs_ext4_pwrite allocates blocks
-    // only for the written range so it works on both new and existing files.
-    // Truncate to the written length first so any existing tail is removed.
+
+    // Create the file if it doesn't exist yet (fs_ext4_truncate fails on ENOENT).
+    let mut attr: fs_ext4_attr_t = unsafe { std::mem::zeroed() };
+    let exists = unsafe { fs_ext4_stat(m.fs, cp.as_ptr(), &mut attr) } == 0;
+    if !exists {
+        let ino = unsafe { fs_ext4_create(m.fs, cp.as_ptr(), 0o644) };
+        if ino == 0 {
+            bail!("create({path:?}) failed: {}", last_err());
+        }
+    }
+
     let rc = unsafe { fs_ext4_truncate(m.fs, cp.as_ptr(), 0) };
     if rc != 0 {
         bail!("truncate({path:?}, 0) failed: {}", last_err());
@@ -679,6 +687,40 @@ pub fn write_file(mt: &MountArgs, path: &str) -> Result<()> {
         if written < 0 {
             bail!("pwrite({path:?}) failed: {}", last_err());
         }
+    }
+    Ok(())
+}
+
+pub fn touch(mt: &MountArgs, path: &str) -> Result<()> {
+    let m = Mount::open_rw(mt)?;
+    let cp = CString::new(path).context("path contains NUL byte")?;
+    let mut attr: fs_ext4_attr_t = unsafe { std::mem::zeroed() };
+    let exists = unsafe { fs_ext4_stat(m.fs, cp.as_ptr(), &mut attr) } == 0;
+    if !exists {
+        let ino = unsafe { fs_ext4_create(m.fs, cp.as_ptr(), 0o644) };
+        if ino == 0 {
+            bail!("create({path:?}) failed: {}", last_err());
+        }
+    }
+    Ok(())
+}
+
+pub fn chmod(mt: &MountArgs, path: &str, mode: u32) -> Result<()> {
+    let m = Mount::open_rw(mt)?;
+    let cp = CString::new(path).context("path contains NUL byte")?;
+    let rc = unsafe { fs_ext4_chmod(m.fs, cp.as_ptr(), mode as u16) };
+    if rc != 0 {
+        bail!("chmod({path:?}, {mode:#o}) failed: {}", last_err());
+    }
+    Ok(())
+}
+
+pub fn chown(mt: &MountArgs, path: &str, uid: u32, gid: u32) -> Result<()> {
+    let m = Mount::open_rw(mt)?;
+    let cp = CString::new(path).context("path contains NUL byte")?;
+    let rc = unsafe { fs_ext4_chown(m.fs, cp.as_ptr(), uid, gid) };
+    if rc != 0 {
+        bail!("chown({path:?}, {uid}, {gid}) failed: {}", last_err());
     }
     Ok(())
 }
