@@ -327,7 +327,7 @@ fn resolve_symlink(m: &Mount, path: &str) -> Result<String> {
     bail!("symlink loop or depth > 8: {path:?}")
 }
 
-pub fn cat(mt: &MountArgs, path: &str) -> Result<()> {
+pub fn cat(mt: &MountArgs, path: &str, offset: u64, length: Option<u64>) -> Result<()> {
     use std::io::Write;
 
     let m = Mount::open(mt)?;
@@ -338,21 +338,25 @@ pub fn cat(mt: &MountArgs, path: &str) -> Result<()> {
     if unsafe { fs_ext4_stat(m.fs, cp.as_ptr(), &mut attr) } != 0 {
         bail!("stat({resolved:?}) failed: {}", last_err());
     }
-    if attr.size == 0 {
+
+    let end = length
+        .map(|l| (offset + l).min(attr.size))
+        .unwrap_or(attr.size);
+    if offset >= end {
         return Ok(());
     }
 
     let mut stdout = std::io::stdout().lock();
-    let mut offset: u64 = 0;
+    let mut pos = offset;
     let mut buf = vec![0u8; 64 * 1024];
-    while offset < attr.size {
-        let want = std::cmp::min(buf.len() as u64, attr.size - offset);
+    while pos < end {
+        let want = std::cmp::min(buf.len() as u64, end - pos);
         let n = unsafe {
             fs_ext4_read_file(
                 m.fs,
                 cp.as_ptr(),
                 buf.as_mut_ptr() as *mut c_void,
-                offset,
+                pos,
                 want,
             )
         };
@@ -363,7 +367,7 @@ pub fn cat(mt: &MountArgs, path: &str) -> Result<()> {
             break;
         }
         stdout.write_all(&buf[..n as usize])?;
-        offset += n as u64;
+        pos += n as u64;
     }
     Ok(())
 }

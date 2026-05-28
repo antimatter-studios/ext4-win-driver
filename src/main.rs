@@ -99,11 +99,17 @@ enum Cmd {
         mt: MountArgs,
         path: String,
     },
-    /// Print a file's contents to stdout.
+    /// Print a file's contents to stdout. Follows symlinks.
     Cat {
         #[command(flatten)]
         mt: MountArgs,
         path: String,
+        /// Byte offset to start reading from (default: 0).
+        #[arg(long, default_value_t = 0)]
+        offset: u64,
+        /// Maximum number of bytes to read (default: read to EOF).
+        #[arg(long)]
+        length: Option<u64>,
     },
     /// Recursive tree listing from /.
     Tree {
@@ -312,7 +318,7 @@ fn main() -> Result<()> {
             expect_count,
         } => cmd::verify_ls(&mt, &path, &expect_names, expect_count),
         Cmd::Stat { mt, path } => cmd::stat(&mt, &path),
-        Cmd::Cat { mt, path } => cmd::cat(&mt, &path),
+        Cmd::Cat { mt, path, offset, length } => cmd::cat(&mt, &path, offset, length),
         Cmd::Tree { mt, max_depth } => cmd::tree(&mt, max_depth),
         Cmd::Parts { image } => cmd::parts(&image),
         Cmd::Audit {
