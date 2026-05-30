@@ -378,7 +378,9 @@ fn resolve_symlink(m: &Mount, path: &str) -> Result<String> {
         if r < 0 {
             bail!("readlink({current:?}) failed: {}", last_err());
         }
-        let target = std::str::from_utf8(&buf[..r as usize]).unwrap_or("").to_owned();
+        let target = std::str::from_utf8(&buf[..r as usize])
+            .unwrap_or("")
+            .to_owned();
         if target.starts_with('/') {
             current = target;
         } else {
@@ -869,7 +871,10 @@ pub fn mknod(mt: &MountArgs, path: &str, mode: u16, major: u32, minor: u32) -> R
     let cp = CString::new(path).context("path contains NUL byte")?;
     let rc = unsafe { fs_ext4_mknod(m.fs, cp.as_ptr(), mode, major, minor) };
     if rc != 0 {
-        bail!("mknod({path:?}, mode=0o{mode:o}, {major}:{minor}) failed: {}", last_err());
+        bail!(
+            "mknod({path:?}, mode=0o{mode:o}, {major}:{minor}) failed: {}",
+            last_err()
+        );
     }
     Ok(())
 }
