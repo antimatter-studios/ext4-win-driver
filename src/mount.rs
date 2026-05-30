@@ -377,7 +377,7 @@ mod winfsp_adapter {
         OpenFileInfo, VolumeInfo, WideNameInfo,
     };
     use winfsp::host::DebugMode;
-    use winfsp::host::{FileSystemHost, FileSystemParams, OperationGuardStrategy, VolumeParams};
+    use winfsp::host::{FileSystemHost, FileSystemParams, VolumeParams};
     use winfsp::Result as FspResult;
     use winfsp_sys::{FILE_ACCESS_RIGHTS, FILE_FLAGS_AND_ATTRIBUTES};
 
@@ -537,7 +537,9 @@ mod winfsp_adapter {
             if r < 0 {
                 return Err(STATUS_OBJECT_NAME_NOT_FOUND.into());
             }
-            let target = std::str::from_utf8(&buf[..r as usize]).unwrap_or("").to_owned();
+            let target = std::str::from_utf8(&buf[..r as usize])
+                .unwrap_or("")
+                .to_owned();
             if target.starts_with('/') {
                 current = target;
             } else {
@@ -1506,7 +1508,6 @@ mod winfsp_adapter {
             FileSystemParams {
                 use_dir_info_by_name: true,
                 volume_params: params,
-                guard_strategy: OperationGuardStrategy::Fine,
                 debug_mode: DebugMode::none(),
             },
             ctx,
