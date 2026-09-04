@@ -49,7 +49,7 @@ ctrlc = "3"
 # the `mount` feature does nothing (the cfg-gated module is empty).
 #
 # Path-depended on the antimatter-studios fork of winfsp-rs (vendored
-# under vendor/winfsp-rs) until our gnullvm-support PR lands upstream
+# checked out as a sibling at ../winfsp-rs) until our gnullvm-support PR lands upstream
 # at SnowflakePowered/winfsp-rs. The patch lifts winfsp-sys/build.rs's
 # MSVC-only gate so the same MSVC-format .lib (consumed via lld-link)
 # works for *-pc-windows-gnullvm Rust toolchains too.
@@ -76,18 +76,18 @@ ctrlc = "3"
 # patches that copy for the _ReadWriteBarrier collision, so bindgen
 # reads what CI patched. Runtime behaviour is unchanged either way:
 # both link by delayload of winfsp-x64.dll.
-winfsp = { path = "vendor/winfsp-rs/winfsp", features = ["delayload"], optional = true, default-features = false }
+winfsp = { path = "../winfsp-rs/winfsp", features = ["delayload"], optional = true, default-features = false }
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
 ], optional = true }
-winfsp-sys = { path = "vendor/winfsp-rs/winfsp-sys", optional = true }
+winfsp-sys = { path = "../winfsp-rs/winfsp-sys", optional = true }
 widestring = { version = "1", optional = true }
 
 [target.'cfg(windows)'.build-dependencies]
 # Only used when the `mount` feature is on; build.rs guards the call.
 # `delayload` implies the `build` feature in winfsp's Cargo.toml.
-winfsp = { path = "vendor/winfsp-rs/winfsp", features = ["delayload"], default-features = false }
+winfsp = { path = "../winfsp-rs/winfsp", features = ["delayload"], default-features = false }
 
 [features]
 default = []

@@ -42,20 +42,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # winfsp-rs is needed HERE TOO, despite being Windows-only.
-          # Cargo resolves every path dependency when it parses the
-          # manifest, including ones under
-          # `[target.'cfg(windows)'.dependencies]` that this target will
-          # never build. Without the submodule the run dies before
-          # compiling anything:
-          #
-          #   error: failed to get `winfsp` as a dependency
-          #   Caused by: failed to read vendor/winfsp-rs/winfsp/Cargo.toml
-          #
-          # "It is Windows-only so Linux does not need it" is the
-          # intuition, and it is wrong: cargo needs the manifest to
-          # exist, not the code to compile.
-          submodules: recursive
+        # No submodules: there are none left. winfsp-rs is needed on
+        # THIS runner too despite being Windows-only -- cargo resolves
+        # every path dependency when it parses the manifest, including
+        # cfg(windows) ones this target will never build.
 
       - name: check out sibling repos
         # The family repos are siblings, not submodules; the refs live
@@ -105,11 +95,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # vendor/winfsp-rs only. It is our fork of a third-party crate
-          # on the gnullvm-support branch, carrying a patch that is not
-          # ours to release — a submodule is the right tool for that,
-          # and the header patch below reaches into it.
-          submodules: recursive
+        # No submodules; winfsp-rs is a sibling like everything
+        # else, and the header patch below reaches into that checkout.
 
       - name: check out sibling repos
         # chore publishes darwin and linux builds only, and `uname -s`
@@ -134,9 +121,14 @@ jobs:
             rust-fs-ext4       "$(pin FS_EXT4_URL)" "$(pin FS_EXT4_REF)" \
             winfsp-fs-skeleton "$(pin SKELETON_URL)" "$(pin SKELETON_REF)" \
             fs-test-harness    "$(pin HARNESS_URL)" "$(pin HARNESS_REF)" \
+            winfsp-rs          "$(pin WINFSP_RS_URL)" "$(pin WINFSP_RS_REF)" \
           | while IFS="$(printf '\t')" read -r name url ref; do
               echo "cloning $name at $ref"
-              git clone --quiet --depth 1 --branch "$ref" "$url" "../$name"
+              # Clone then checkout rather than --branch: winfsp-rs is
+              # pinned to a commit, which --branch cannot take, and a
+              # shallow clone cannot reach an arbitrary one.
+              git clone --quiet "$url" "../$name"
+              git -C "../$name" checkout --quiet "$ref"
             done
 
       - name: install Rust + gnullvm target
@@ -192,7 +184,7 @@ jobs:
           $needle = '    void _ReadWriteBarrier(void);'
           $replacement = "#pragma push_macro(`"_ReadWriteBarrier`")`n#undef _ReadWriteBarrier`n    void _ReadWriteBarrier(void);`n#pragma pop_macro(`"_ReadWriteBarrier`")"
           foreach ($f in @(
-            'vendor/winfsp-rs/winfsp-sys/winfsp/inc/winfsp/fsctl.h',
+            '../winfsp-rs/winfsp-sys/winfsp/inc/winfsp/fsctl.h',
             'C:\Program Files (x86)\WinFsp\inc\winfsp\fsctl.h'
           )) {
             if (-not (Test-Path $f)) { "Skipping (not found): $f"; continue }

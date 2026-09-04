@@ -51,6 +51,13 @@ vars:
   # `translate` and `reader` modules are what this driver will move to.
   SKELETON_URL: https://github.com/antimatter-studios/winfsp-fs-skeleton.git
   SKELETON_REF: v0.2.1
+  # Pinned to a COMMIT, not a branch. This is a fork of a third-party
+  # crate, so there is no release cadence of ours to track, and upstream
+  # 0.13.0 does not compile for *-pc-windows-gnullvm -- it declares the
+  # guard-strategy constant signed while bindgen emits it unsigned for
+  # that target.
+  WINFSP_RS_URL: https://github.com/antimatter-studios/winfsp-rs.git
+  WINFSP_RS_REF: 2f1ea36bf508a4fb2cc603a7ec14289a0bb16497
   HARNESS_URL: https://github.com/antimatter-studios/fs-test-harness.git
   HARNESS_REF: v3.11.0
 
@@ -70,12 +77,16 @@ tasks:
           rust-fs-ext4       '{{.FS_EXT4_URL}}' '{{.FS_EXT4_REF}}' \
           winfsp-fs-skeleton '{{.SKELETON_URL}}' '{{.SKELETON_REF}}' \
           fs-test-harness    '{{.HARNESS_URL}}' '{{.HARNESS_REF}}' \
+          winfsp-rs          '{{.WINFSP_RS_URL}}' '{{.WINFSP_RS_REF}}' \
         | while IFS="$(printf '\t')" read -r name url ref; do
             dir="../$name"
 
             if [ ! -d "$dir/.git" ]; then
               echo "siblings: cloning $name at $ref"
-              git clone --quiet --branch "$ref" "$url" "$dir"
+              # Clone then checkout, rather than --branch: one of these
+              # refs is a commit, which --branch cannot take.
+              git clone --quiet "$url" "$dir"
+              git -C "$dir" checkout --quiet "$ref"
               continue
             fi
 
