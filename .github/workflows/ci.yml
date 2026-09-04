@@ -41,7 +41,6 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
-        with:
         # No submodules: there are none left. winfsp-rs is needed on
         # THIS runner too despite being Windows-only -- cargo resolves
         # every path dependency when it parses the manifest, including
@@ -94,7 +93,6 @@ jobs:
       LLVM_MINGW_VER: 20260421
     steps:
       - uses: actions/checkout@v4
-        with:
         # No submodules; winfsp-rs is a sibling like everything
         # else, and the header patch below reaches into that checkout.
 
