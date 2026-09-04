@@ -377,7 +377,14 @@ mod winfsp_adapter {
         OpenFileInfo, VolumeInfo, WideNameInfo,
     };
     use winfsp::host::DebugMode;
-    use winfsp::host::{FileSystemHost, FileSystemParams, OperationGuardStrategy, VolumeParams};
+    // The locking strategy is a TYPE PARAMETER on FileSystemHost in
+    // 0.13.0, not a field on FileSystemParams -- that is the change that
+    // "move guard strategy into types to prevent potential send/sync
+    // soundness issues" made, and the reason it is a parameter is that
+    // Fine requires the context to be Sync while Coarse only needs Send.
+    // Leaving it inferred picks FineGuard, which is what this driver was
+    // asking for explicitly.
+    use winfsp::host::{FileSystemHost, FileSystemParams, VolumeParams};
     use winfsp::Result as FspResult;
     use winfsp_sys::{FILE_ACCESS_RIGHTS, FILE_FLAGS_AND_ATTRIBUTES};
 
@@ -1498,13 +1505,6 @@ mod winfsp_adapter {
             FileSystemParams {
                 use_dir_info_by_name: true,
                 volume_params: params,
-                // Fine-grained locking: WinFsp guards namespace
-                // operations with a read-write lock and leaves file I/O
-                // concurrent, so reads on different files do not
-                // serialise. This is the strategy the crate defaults
-                // to, stated explicitly because it is a field here
-                // rather than a type parameter.
-                guard_strategy: OperationGuardStrategy::Fine,
                 debug_mode: DebugMode::none(),
             },
             ctx,
