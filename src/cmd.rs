@@ -102,52 +102,79 @@ fn format_mode_str(mode: u16, file_type: &fs_ext4_file_type_t) -> String {
     )
 }
 
-/// Format a Unix timestamp (seconds since epoch) as a compact UTC string.
-fn format_unix_time(secs: u32) -> String {
-    // Days from epoch; compute year/month/day via the proleptic Gregorian calendar.
-    let s = secs as u64;
-    let (sec, s) = (s % 60, s / 60);
-    let (min, s) = (s % 60, s / 60);
-    let (hour, mut days) = (s % 24, s / 24);
-    // Algorithm: days since 1970-01-01
-    let mut year = 1970u32;
-    loop {
-        let leap =
-            year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
-        let dy = if leap { 366 } else { 365 };
-        if days < dy {
-            break;
-        }
-        days -= dy;
-        year += 1;
-    }
-    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
-    let months = [
-        31u64,
-        if leap { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    let mut month = 1u32;
-    for m in &months {
-        if days < *m {
-            break;
-        }
-        days -= m;
-        month += 1;
-    }
-    format!(
-        "{year:04}-{month:02}-{:02}T{hour:02}:{min:02}:{sec:02}Z",
-        days + 1
-    )
+/// Format a Unix timestamp as a compact UTC string.
+///
+/// Seconds are `i64` because that is what `am-fs-ext4` now reports.
+/// Before 0.5.0 the C attribute struct carried `uint32_t` timestamps;
+/// ext4 stores a *signed* 32-bit base extended by two epoch bits, so
+/// the real range is roughly 1901..2446 and the old type truncated
+/// everything past 2038 while turning every pre-1970 date into a
+/// far-future one.
+///
+/// The previous implementation walked years forward from 1970 in a
+/// loop, which cannot express a negative timestamp at all — the loop
+/// simply never ran. It is replaced by days-to-civil arithmetic, which
+/// is closed-form and works in both directions.
+fn format_unix_time(secs: i64) -> String {
+    // Floor division, not truncation. `-1 / 86400` truncates to 0,
+    // which would put 1969-12-31T23:59:59 on the wrong day; `div_euclid`
+    // floors to -1, which is the day that second actually falls in.
+    let days = secs.div_euclid(SECONDS_PER_DAY);
+    let second_of_day = secs.rem_euclid(SECONDS_PER_DAY);
+    let (hour, min, sec) = (
+        second_of_day / 3600,
+        (second_of_day % 3600) / 60,
+        second_of_day % 60,
+    );
+    let (year, month, day) = civil_from_days(days);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}Z")
+}
+
+const SECONDS_PER_DAY: i64 = 86_400;
+
+/// Days in one 400-year Gregorian cycle ("era"), which is the period
+/// over which the leap-year rules repeat exactly.
+const DAYS_PER_ERA: i64 = 146_097;
+
+/// Days from 0000-03-01 to 1970-01-01. The arithmetic below counts from
+/// a March-based year, because that puts the leap day at the END of the
+/// year where it perturbs nothing.
+const DAYS_FROM_MARCH_ZERO_TO_EPOCH: i64 = 719_468;
+
+/// Convert days-since-1970-01-01 to a proleptic Gregorian date.
+///
+/// Closed-form, and correct for negative inputs, which is the whole
+/// reason it replaced a forward-counting loop. Implemented from the
+/// published `civil_from_days` algorithm (Howard Hinnant's calendar
+/// papers, placed in the public domain); written here from the
+/// description rather than copied.
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    // Shift the origin to 0000-03-01 so a year runs March..February and
+    // February's variable length lands last.
+    let shifted = days + DAYS_FROM_MARCH_ZERO_TO_EPOCH;
+    let era = if shifted >= 0 {
+        shifted
+    } else {
+        shifted - (DAYS_PER_ERA - 1)
+    } / DAYS_PER_ERA;
+    let day_of_era = shifted - era * DAYS_PER_ERA; // [0, 146096]
+                                                   // Subtract the leap days the era has accumulated: one per 4 years,
+                                                   // minus one per 100, plus one per 400.
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100); // [0, 365]
+                                                                                              // Months in the March-based year have a repeating 153/5 length
+                                                                                              // pattern, which makes the month recoverable by division.
+    let month_prime = (5 * day_of_year + 2) / 153; // [0, 11], 0 = March
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1; // [1, 31]
+    let month = if month_prime < 10 {
+        month_prime + 3
+    } else {
+        month_prime - 9
+    };
+    // Undo the March origin: January and February belong to the next year.
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    (year, month, day)
 }
 
 fn format_uuid(u: &[u8; 16]) -> String {
@@ -945,4 +972,58 @@ pub fn fallocate(mt: &MountArgs, path: &str, offset: u64, len: u64, flags: i32) 
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod time_tests {
+    use super::format_unix_time;
+
+    /// Dates the old forward-counting loop handled. Kept so the
+    /// rewrite is checked against the behaviour it replaced, not only
+    /// against the cases that motivated it.
+    #[test]
+    fn dates_after_the_epoch_are_unchanged() {
+        assert_eq!(format_unix_time(0), "1970-01-01T00:00:00Z");
+        assert_eq!(format_unix_time(1), "1970-01-01T00:00:01Z");
+        assert_eq!(format_unix_time(946_684_800), "2000-01-01T00:00:00Z");
+        assert_eq!(format_unix_time(1_700_000_000), "2023-11-14T22:13:20Z");
+    }
+
+    /// The reason for the rewrite. A negative timestamp was
+    /// unrepresentable: the argument was `u32`, and the year loop only
+    /// counted upward from 1970, so it could not run at all.
+    #[test]
+    fn dates_before_the_epoch_go_backwards() {
+        assert_eq!(format_unix_time(-1), "1969-12-31T23:59:59Z");
+        assert_eq!(format_unix_time(-86_400), "1969-12-31T00:00:00Z");
+        assert_eq!(format_unix_time(-315_619_200), "1960-01-01T00:00:00Z");
+        // 1901-12-13, the floor of a signed 32-bit second count and so
+        // the oldest date ext4 can store.
+        assert_eq!(format_unix_time(-2_147_483_648), "1901-12-13T20:45:52Z");
+    }
+
+    /// Truncating division would put this one on the wrong day: `-1 /
+    /// 86400` is 0, which reads as 1970-01-01. Floor division gives -1.
+    #[test]
+    fn the_second_before_the_epoch_is_the_previous_day() {
+        assert!(format_unix_time(-1).starts_with("1969-12-31"));
+    }
+
+    /// Past 2038, which the `uint32_t` attribute struct truncated and
+    /// which the epoch bits now carry.
+    #[test]
+    fn dates_past_2038_are_representable() {
+        assert_eq!(format_unix_time(2_147_483_648), "2038-01-19T03:14:08Z");
+        assert_eq!(format_unix_time(4_102_444_800), "2100-01-01T00:00:00Z");
+        // 2446-05-10, the ceiling of a signed base plus two epoch bits.
+        assert_eq!(format_unix_time(15_032_385_535), "2446-05-10T22:38:55Z");
+    }
+
+    /// Leap-year handling across the rules that disagree: 2000 was a
+    /// leap year (divisible by 400), 1900 was not (divisible by 100).
+    #[test]
+    fn the_century_leap_rules_are_applied() {
+        assert_eq!(format_unix_time(951_782_400), "2000-02-29T00:00:00Z");
+        assert_eq!(format_unix_time(-2_203_891_200), "1900-03-01T00:00:00Z");
+    }
 }

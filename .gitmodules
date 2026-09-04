@@ -1,15 +1,4 @@
-[submodule "vendor/fs-test-harness"]
-	path = vendor/fs-test-harness
-	url = https://github.com/antimatter-studios/fs-test-harness.git
 [submodule "vendor/winfsp-rs"]
 	path = vendor/winfsp-rs
-	url = https://github.com/SnowflakePowered/winfsp-rs.git
-[submodule "vendor/rust-fs-ext4"]
-	path = vendor/rust-fs-ext4
-	url = https://github.com/christhomas/rust-fs-ext4.git
-[submodule "vendor/rust-fs-core"]
-	path = vendor/rust-fs-core
-	url = https://github.com/antimatter-studios/rust-fs-core.git
-[submodule "vendor/winfsp-fs-skeleton"]
-	path = vendor/winfsp-fs-skeleton
-	url = https://github.com/antimatter-studios/winfsp-fs-skeleton
+	url = https://github.com/antimatter-studios/winfsp-rs.git
+	branch = gnullvm-support

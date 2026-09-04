@@ -11,7 +11,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-builder_key="$repo_root/vendor/rust-fs-ext4/test-disks/.vm-cache/builder-key"
+builder_key="$repo_root/../rust-fs-ext4/test-disks/.vm-cache/builder-key"
 
 exec "${EXT4_REAL_SSH:-ssh}" \
     -p 2222 \

@@ -1,0 +1,130 @@
+version: "3"
+chore_min_version: 0.6.0
+
+# THE DEPENDENCY MODEL THIS FILE OWNS.
+#
+# This repo depends on two different KINDS of thing, and they get two
+# different mechanisms. Getting that split right is the whole point:
+#
+#   FAMILY REPOS -> siblings, checked out next to this one.
+#     am-fs-core, am-fs-ext4, winfsp-fs-skeleton, fs-test-harness.
+#     These release together and are expected to agree on a version at
+#     any given moment. A submodule pins a copy PER CONSUMER, so the
+#     same crate ends up on disk several times at several versions with
+#     nothing reporting the divergence -- each repo being internally
+#     consistent with its own stale pin. A sibling has one copy, so
+#     that drift is not merely detected, it is unrepresentable.
+#
+#     It had already happened here. Before this file existed, this repo
+#     pinned am-fs-core at v0.1.0 while the rest of the family was on
+#     v0.2.4, and pinned am-fs-ext4 and winfsp-fs-skeleton to
+#     `heads/main` -- floating refs, which the dependency-pinning policy
+#     forbids outright, and which mean the build was not reproducible.
+#
+#   THIRD-PARTY FORKS -> stay submodules.
+#     vendor/winfsp-rs is our fork of SnowflakePowered/winfsp-rs on the
+#     gnullvm-support branch, carrying a patch that is not ours to
+#     release and not on a schedule we control. It does not belong in a
+#     sibling checkout beside crates we own, the release workflow
+#     PATCHES a header inside it, and there is no expectation that
+#     other repos on this machine want the same revision. A submodule
+#     is the right tool for exactly this shape, and it keeps it.
+
+vars:
+  # The family pins. One place, read by both `chore siblings` and the
+  # CI workflow -- CI parses them out of this file rather than
+  # restating them, so bumping one is still a one-line edit.
+  # URL as well as ref, because the family is NOT all in one org --
+  # rust-fs-ext4 and rust-fs-ntfs live under christhomas/ while the rest
+  # are under antimatter-studios/. Anything that reconstructs a URL from
+  # the repo name gets that wrong for exactly two of them, and the
+  # failure is an interactive credential prompt on a private-looking
+  # URL rather than a clean 404, so it reads as an auth problem.
+  FS_CORE_URL: https://github.com/antimatter-studios/rust-fs-core.git
+  FS_CORE_REF: v0.2.4
+  FS_EXT4_URL: https://github.com/christhomas/rust-fs-ext4.git
+  FS_EXT4_REF: v0.5.0
+  # Pinned to the tag, not to `main`. A floating ref was one of the two
+  # things wrong with the submodule setup this file replaces, and
+  # swapping a floating submodule for a floating sibling would have
+  # fixed nothing. Bump this when the skeleton next releases -- its
+  # `translate` and `reader` modules are what this driver will move to.
+  SKELETON_URL: https://github.com/antimatter-studios/winfsp-fs-skeleton.git
+  SKELETON_REF: v0.2.1
+  HARNESS_URL: https://github.com/antimatter-studios/fs-test-harness.git
+  HARNESS_REF: v3.11.0
+
+tasks:
+  siblings:
+    desc: Check out the sibling repos this crate builds against, at their pinned refs
+    # REFUSES TO TOUCH A DIRTY SIBLING. A checkout is destructive to
+    # uncommitted work, and a task that runs in CI must not be a task
+    # that eats someone's afternoon when they run it locally. It
+    # reports and fails; the human decides.
+    cmds:
+      - |
+        set -eu
+        # name<TAB>url<TAB>ref
+        printf '%s\t%s\t%s\n' \
+          rust-fs-core       '{{.FS_CORE_URL}}' '{{.FS_CORE_REF}}' \
+          rust-fs-ext4       '{{.FS_EXT4_URL}}' '{{.FS_EXT4_REF}}' \
+          winfsp-fs-skeleton '{{.SKELETON_URL}}' '{{.SKELETON_REF}}' \
+          fs-test-harness    '{{.HARNESS_URL}}' '{{.HARNESS_REF}}' \
+        | while IFS="$(printf '\t')" read -r name url ref; do
+            dir="../$name"
+
+            if [ ! -d "$dir/.git" ]; then
+              echo "siblings: cloning $name at $ref"
+              git clone --quiet --branch "$ref" "$url" "$dir"
+              continue
+            fi
+
+            if [ -n "$(git -C "$dir" status --porcelain)" ]; then
+              echo "siblings: $name has uncommitted changes -- refusing to move it." >&2
+              echo "          Commit or stash them in $dir, then re-run." >&2
+              exit 1
+            fi
+
+            current=$(git -C "$dir" rev-parse HEAD)
+            git -C "$dir" fetch --quiet --tags origin
+            wanted=$(git -C "$dir" rev-parse "$ref^{commit}")
+            if [ "$current" = "$wanted" ]; then
+              echo "siblings: $name already at $ref"
+              continue
+            fi
+            echo "siblings: moving $name to $ref"
+            git -C "$dir" checkout --quiet "$ref"
+          done
+
+  siblings:check:
+    desc: Report whether the siblings are at their pinned refs, changing nothing
+    cmds:
+      - |
+        set -eu
+        rc=0
+        printf '%s\t%s\n' \
+          rust-fs-core       '{{.FS_CORE_REF}}' \
+          rust-fs-ext4      '{{.FS_EXT4_REF}}' \
+          winfsp-fs-skeleton '{{.SKELETON_REF}}' \
+          fs-test-harness    '{{.HARNESS_REF}}' \
+        | while IFS="$(printf '\t')" read -r name ref; do
+            dir="../$name"
+            if [ ! -d "$dir/.git" ]; then
+              echo "siblings: $name is not checked out (want $ref)" >&2
+              rc=1
+              continue
+            fi
+            have=$(git -C "$dir" describe --tags --always 2>/dev/null || echo unknown)
+            printf '  %-20s %s (want %s)\n' "$name" "$have" "$ref"
+          done
+        exit $rc
+
+  check:
+    desc: Type-check the parts that build off Windows
+    cmds:
+      - cargo check --locked --no-default-features
+
+  test:
+    desc: Run the tests that do not need Windows
+    cmds:
+      - cargo test --locked --no-default-features

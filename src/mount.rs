@@ -377,7 +377,7 @@ mod winfsp_adapter {
         OpenFileInfo, VolumeInfo, WideNameInfo,
     };
     use winfsp::host::DebugMode;
-    use winfsp::host::{FileSystemHost, FileSystemParams, VolumeParams};
+    use winfsp::host::{FileSystemHost, FileSystemParams, OperationGuardStrategy, VolumeParams};
     use winfsp::Result as FspResult;
     use winfsp_sys::{FILE_ACCESS_RIGHTS, FILE_FLAGS_AND_ATTRIBUTES};
 
@@ -393,29 +393,37 @@ mod winfsp_adapter {
     /// Cleanup `Flags` bit indicating the file should be deleted now.
     const FSP_CLEANUP_DELETE: u32 = 0x01;
 
-    /// "Leave unchanged" sentinel for `fs_ext4_chown` and `fs_ext4_utimens`
-    /// fields — matches Linux's `(uid_t)-1` / `UTIME_OMIT`-equivalent on
-    /// the C ABI side.
+    /// "Leave unchanged" sentinel for `fs_ext4_chown`'s uid/gid fields —
+    /// matches Linux's `(uid_t)-1`.
+    ///
+    /// **Timestamps use a different one.** They used to share this, and
+    /// sharing it became wrong when am-fs-ext4 0.5.0 widened
+    /// `fs_ext4_utimens` to signed 64-bit seconds: `u32::MAX` stopped
+    /// being a spare bit pattern and became an ordinary date in 2106,
+    /// so every "leave this timestamp alone" would have SET it to 2106.
+    /// See [`TIME_UNCHANGED`].
     const KEEP_UNCHANGED: u32 = u32::MAX;
 
-    /// Seconds between Windows FILETIME epoch (1601-01-01) and Unix epoch (1970-01-01).
-    const FILETIME_EPOCH_OFFSET_SEC: u64 = 11_644_473_600;
+    /// "Leave unchanged" sentinel for `fs_ext4_utimens`, spelled
+    /// `FS_EXT4_TIME_OMIT` in `fs_ext4.h`.
+    ///
+    /// `i64::MIN`, because seconds are signed and 64-bit: every value a
+    /// filesystem could hold is a real date, so the sentinel has to sit
+    /// outside the format's range entirely rather than at the top of an
+    /// unsigned one.
+    const TIME_UNCHANGED: i64 = i64::MIN;
 
-    /// Convert a unix-epoch-seconds timestamp to FILETIME (100-ns intervals
-    /// since 1601). Saturating on overflow — ext4 timestamps fit in 32 bits
-    /// (or 64 with high-precision attrs), well within u64 FILETIME range.
-    fn unix_to_filetime(secs: u32) -> u64 {
-        (FILETIME_EPOCH_OFFSET_SEC.saturating_add(secs as u64)).saturating_mul(10_000_000)
-    }
-
-    /// Convert a unix timestamp with nanosecond precision to FILETIME.
-    /// FILETIME resolution is 100 ns; we round nsec down to the nearest 100 ns.
-    fn unix_to_filetime_nsec(secs: u32, nsec: u32) -> u64 {
-        let whole_second_ticks =
-            (FILETIME_EPOCH_OFFSET_SEC.saturating_add(secs as u64)).saturating_mul(10_000_000);
-        let sub_second_ticks = (nsec / 100) as u64;
-        whole_second_ticks.saturating_add(sub_second_ticks)
-    }
+    // The Unix-to-FILETIME conversion lives in winfsp-fs-skeleton, not
+    // here. This module had two copies of it, both taking `u32`
+    // seconds; the erofs and xfs drivers had a third and a fourth,
+    // taking `u64`. Four implementations of one conversion at three
+    // widths, and the widest still could not express a date before
+    // 1970 -- even though FILETIME's epoch is 1601 and represents it
+    // perfectly well.
+    //
+    // The shared one takes `i64`, which is what am-fs-ext4 0.5.0 now
+    // reports, so these call sites need no casts.
+    use winfsp_fs_skeleton::translate::{filetime_to_unix, unix_to_filetime};
 
     /// Apply a `FILE_FULL_EA_INFORMATION` buffer to `path` on `fs`.
     ///
@@ -500,12 +508,12 @@ mod winfsp_adapter {
         info.allocation_size = (attr.size + 4095) & !4095;
         // Use sub-second precision where available (crtime_nsec / mtime_nsec may
         // be 0 on old ext2/3 inodes; the fallback in fill_attr zeros the nsec fields).
-        let ct = unix_to_filetime_nsec(attr.crtime, attr.crtime_nsec)
-            .max(unix_to_filetime_nsec(attr.mtime, attr.mtime_nsec));
+        let ct = unix_to_filetime(attr.crtime, attr.crtime_nsec)
+            .max(unix_to_filetime(attr.mtime, attr.mtime_nsec));
         info.creation_time = ct;
-        info.last_access_time = unix_to_filetime_nsec(attr.atime, attr.atime_nsec);
-        info.last_write_time = unix_to_filetime_nsec(attr.mtime, attr.mtime_nsec);
-        info.change_time = unix_to_filetime_nsec(attr.ctime, attr.ctime_nsec);
+        info.last_access_time = unix_to_filetime(attr.atime, attr.atime_nsec);
+        info.last_write_time = unix_to_filetime(attr.mtime, attr.mtime_nsec);
+        info.change_time = unix_to_filetime(attr.ctime, attr.ctime_nsec);
         info.index_number = attr.inode as u64;
         info.hard_links = attr.link_count as u32;
         info.ea_size = 0;
@@ -1112,13 +1120,19 @@ mod winfsp_adapter {
             let path = context.unix_path();
             let cp = CString::new(path.as_str())
                 .map_err(|_| windows::core::Error::from(STATUS_OBJECT_NAME_NOT_FOUND))?;
-            let (atime_sec, atime_nsec) = filetime_to_unix_nsec(last_access_time)
-                .map(|(s, n)| (s, n))
-                .unwrap_or((KEEP_UNCHANGED, 0));
-            let (mtime_sec, mtime_nsec) = filetime_to_unix_nsec(last_write_time)
-                .map(|(s, n)| (s, n))
-                .unwrap_or((KEEP_UNCHANGED, 0));
-            if atime_sec != KEEP_UNCHANGED || mtime_sec != KEEP_UNCHANGED {
+            // A zero FILETIME is WinFsp's "leave unchanged", and the
+            // only input `filetime_to_unix` reports as having no
+            // timestamp. Everything else converts, including dates
+            // before 1970 — the copy this replaced returned None for
+            // those, which reads here as "leave unchanged" and so
+            // silently discarded a time the user had asked for.
+            let (atime_sec, atime_nsec) = filetime_to_unix(last_access_time)
+                .map(|t| (t.secs, t.nsec))
+                .unwrap_or((TIME_UNCHANGED, 0));
+            let (mtime_sec, mtime_nsec) = filetime_to_unix(last_write_time)
+                .map(|t| (t.secs, t.nsec))
+                .unwrap_or((TIME_UNCHANGED, 0));
+            if atime_sec != TIME_UNCHANGED || mtime_sec != TIME_UNCHANGED {
                 let rc = unsafe {
                     fs_ext4_utimens(
                         self.mount.fs,
@@ -1450,30 +1464,6 @@ mod winfsp_adapter {
         }
     }
 
-    /// FILETIME (100-ns since 1601) → (Unix seconds, sub-second nanoseconds).
-    /// Returns `None` for 0 (WinFsp's "leave unchanged" sentinel) and for
-    /// FILETIMEs that predate the Unix epoch.
-    fn filetime_to_unix_nsec(ft: u64) -> Option<(u32, u32)> {
-        if ft == 0 {
-            return None;
-        }
-        let secs_since_1601 = ft / 10_000_000;
-        if secs_since_1601 < FILETIME_EPOCH_OFFSET_SEC {
-            return None;
-        }
-        let unix = secs_since_1601 - FILETIME_EPOCH_OFFSET_SEC;
-        let nsec = ((ft % 10_000_000) * 100) as u32;
-        if unix > u32::MAX as u64 {
-            return Some((u32::MAX - 1, 0));
-        }
-        Some((unix as u32, nsec))
-    }
-
-    /// FILETIME → Unix seconds only (convenience wrapper used by read paths).
-    fn filetime_to_unix(ft: u64) -> Option<u32> {
-        filetime_to_unix_nsec(ft).map(|(s, _)| s)
-    }
-
     /// Mount the given ext4 source on a Windows mount point.
     ///
     /// `mount_point` accepts a drive letter (`X:`) or a path to an empty
@@ -1508,6 +1498,13 @@ mod winfsp_adapter {
             FileSystemParams {
                 use_dir_info_by_name: true,
                 volume_params: params,
+                // Fine-grained locking: WinFsp guards namespace
+                // operations with a read-write lock and leaves file I/O
+                // concurrent, so reads on different files do not
+                // serialise. This is the strategy the crate defaults
+                // to, stated explicitly because it is a field here
+                // rather than a type parameter.
+                guard_strategy: OperationGuardStrategy::Fine,
                 debug_mode: DebugMode::none(),
             },
             ctx,

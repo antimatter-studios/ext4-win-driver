@@ -23,7 +23,7 @@ Scope:
 4. **Setup.exe** -- bundles WinFsp via a Burn bootstrapper, so end users
    only run one installer.
 
-The `fs-ext4` library lives at [`vendor/rust-fs-ext4/`](./vendor/rust-fs-ext4)
+The `fs-ext4` library lives at [`../rust-fs-ext4/`](../rust-fs-ext4)
 (git submodule from [christhomas/rust-fs-ext4](https://github.com/christhomas/rust-fs-ext4))
 and is path-depended; this crate is the distribution unit.
 
@@ -31,7 +31,7 @@ The Windows-driver scaffolding (SCM service, disk-arrival watcher,
 WinFsp.Launcher integration, partition-table walker, raw-device I/O,
 installer + CI templates) lives in
 [winfsp-fs-skeleton](https://github.com/antimatter-studios/winfsp-fs-skeleton),
-vendored at [`vendor/winfsp-fs-skeleton/`](./vendor/winfsp-fs-skeleton).
+vendored at [`../winfsp-fs-skeleton/`](../winfsp-fs-skeleton).
 ext4-win-driver is the **first consumer** of that skeleton -- it was
 extracted from this project once the auto-mount path was working
 end-to-end. See [The skeleton split](#the-skeleton-split) below for the
@@ -223,7 +223,7 @@ where the LocalSystem PATH doesn't reach the LLVM-MinGW runtime dir.
   - LLVM-MinGW (`winget install MartinStorsjo.LLVM-MinGW.UCRT`)
 - `LIBCLANG_PATH=C:\Program Files\LLVM\bin` so bindgen can find `libclang.dll`.
 - [winfsp-fs-skeleton](https://github.com/antimatter-studios/winfsp-fs-skeleton)
-  is a git submodule at [`vendor/winfsp-fs-skeleton/`](./vendor/winfsp-fs-skeleton);
+  is a git submodule at [`../winfsp-fs-skeleton/`](../winfsp-fs-skeleton);
   pure Rust, no extra toolchain requirements.
 
 ### Building the installer
@@ -245,7 +245,7 @@ Produces `dist\ext4-win-driver-<ver>-arm64.msi` and
 Scenarios live in [`test-matrix.json`](./test-matrix.json) and the per-project
 adapter config in [`harness.toml`](./harness.toml). Both are consumed by the
 shared [`fs-test-harness`](https://github.com/antimatter-studios/fs-test-harness),
-vendored as a git submodule at [`vendor/fs-test-harness/`](./vendor/fs-test-harness).
+vendored as a git submodule at [`../fs-test-harness/`](../fs-test-harness).
 
 After cloning, initialise the submodules:
 
@@ -256,9 +256,9 @@ git submodule update --init --recursive
 Run the test matrix (Mac -> SSH -> Windows VM -> diag pull):
 
 ```sh
-bash vendor/fs-test-harness/scripts/run-tests.sh                 # full matrix
-bash vendor/fs-test-harness/scripts/run-tests.sh basic-ro-list   # one scenario
-bash vendor/fs-test-harness/scripts/run-tests.sh --help          # all flags
+bash ../fs-test-harness/scripts/run-tests.sh                 # full matrix
+bash ../fs-test-harness/scripts/run-tests.sh basic-ro-list   # one scenario
+bash ../fs-test-harness/scripts/run-tests.sh --help          # all flags
 ```
 
 On the very first run, the script prompts for VM details (user, IP,
@@ -267,16 +267,16 @@ skip straight to ship + run + diag-pull. Use `--reset` to wipe
 `.test-env` and re-prompt (e.g. after VM IP change).
 
 Diagnostics land under `test-diagnostics/run-<UTC>/`. See the harness's
-[`docs/triage-protocol.md`](./vendor/fs-test-harness/docs/triage-protocol.md)
+[`docs/triage-protocol.md`](../fs-test-harness/docs/triage-protocol.md)
 for how to read a failure, and
-[`docs/multi-agent-protocol.md`](./vendor/fs-test-harness/docs/multi-agent-protocol.md)
+[`docs/multi-agent-protocol.md`](../fs-test-harness/docs/multi-agent-protocol.md)
 for running multiple agents against the same matrix.
 
 To update a vendored submodule when its upstream releases:
 
 ```sh
-git submodule update --remote --merge vendor/fs-test-harness
-git add vendor/fs-test-harness && git commit -m "chore: bump fs-test-harness submodule"
+git submodule update --remote --merge ../fs-test-harness
+git add ../fs-test-harness && git commit -m "chore: bump fs-test-harness submodule"
 ```
 
 ## License
