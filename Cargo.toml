@@ -14,7 +14,7 @@ name = "ext4"
 path = "src/main.rs"
 
 [dependencies]
-fs-ext4 = { path = "vendor/rust-fs-ext4" }
+am-fs-ext4 = { path = "../rust-fs-ext4", version = "0.5" }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 # winfsp-fs-skeleton owns the SCM dispatcher, disk-arrival event pump,
@@ -23,7 +23,7 @@ anyhow = "1"
 # detect via the FsBackend trait. The skeleton has cross-platform stubs
 # for non-windows hosts so it stays in [dependencies], not the
 # windows-only block.
-winfsp-fs-skeleton = { path = "vendor/winfsp-fs-skeleton", default-features = false }
+winfsp-fs-skeleton = { path = "../winfsp-fs-skeleton", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 # Aligned with winfsp-fs-skeleton's pin so cargo resolves a single

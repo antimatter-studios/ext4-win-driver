@@ -4,7 +4,7 @@
 # or any signal).
 #
 # Why a wrapper instead of fixing the harness directly:
-# * The harness lives in `vendor/fs-test-harness/` (git submodule);
+# * The harness lives in `../fs-test-harness/` (git submodule);
 #   we don't own its lifecycle. Cleanup belongs in consumer code.
 # * `init-image` (and ship-to-host) create .img files under HOST_IMAGE_DIR
 #   and have no opinion about who removes them. Without this trap the
@@ -19,7 +19,7 @@
 #   Stale locks (from killed processes) can be removed with:
 #     rm -rf /tmp/ext4-matrix-lock-*
 #
-# Usage: same as `vendor/fs-test-harness/scripts/run-tests.sh`. All
+# Usage: same as `../fs-test-harness/scripts/run-tests.sh`. All
 # arguments pass straight through. Examples:
 #
 #   bash scripts/run-matrix.sh                  # full matrix
@@ -160,7 +160,7 @@ ship_vm_scripts() {
     local key_opts=()
     [[ -n "$ssh_key" && -f "$ssh_key" ]] && key_opts=(-i "$ssh_key" -o IdentitiesOnly=yes)
 
-    local harness_dir="vendor/fs-test-harness"
+    local harness_dir="../fs-test-harness"
     local src="$repo_root/$harness_dir/scripts/vm"
     local dest="$vm_workdir/$harness_dir/scripts/vm"
     local ps_dest="${dest//\//\\}"
@@ -213,8 +213,8 @@ ensure_vm_workdir() {
 # duration of the matrix run. Each recipe's `build-ext4-image` op SSHes
 # into this VM to create + format + populate one image.
 start_builder_vm() {
-    local builder_script="$repo_root/vendor/rust-fs-ext4/test-disks/build-ext4-feature-images.sh"
-    local env_file="$repo_root/vendor/rust-fs-ext4/test-disks/.vm-cache/server.env"
+    local builder_script="$repo_root/../rust-fs-ext4/test-disks/build-ext4-feature-images.sh"
+    local env_file="$repo_root/../rust-fs-ext4/test-disks/.vm-cache/server.env"
 
     # If a previous invocation left server.env and the qemu is still alive,
     # reuse it — don't start a second VM on the same port.
@@ -257,7 +257,7 @@ stop_builder_vm() {
     # Don't stop a VM we didn't start — it might still be in use by another
     # concurrent invocation that is reusing it.
     [[ "${builder_vm_owned:-0}" -eq 0 ]] && return 0
-    local builder_key="$repo_root/vendor/rust-fs-ext4/test-disks/.vm-cache/builder-key"
+    local builder_key="$repo_root/../rust-fs-ext4/test-disks/.vm-cache/builder-key"
     echo "[run-matrix] builder VM: shutting down (pid=${builder_vm_pid})..." >&2
     ssh \
         -p 2222 \
@@ -347,7 +347,7 @@ ship_vm_scripts
 # are targeting.
 if [[ "${#forwarded_args[@]}" -eq 0 ]]; then
     echo "[run-matrix] === smoke gate (group: smoke) ===" >&2
-    if ! bash "$repo_root/vendor/fs-test-harness/scripts/run-tests.sh" smoke; then
+    if ! bash "$repo_root/../fs-test-harness/scripts/run-tests.sh" smoke; then
         echo "[run-matrix] smoke gate failed; aborting before full matrix run" >&2
         exit 1
     fi
@@ -355,4 +355,4 @@ if [[ "${#forwarded_args[@]}" -eq 0 ]]; then
 fi
 
 # Forward to the real runner.
-bash "$repo_root/vendor/fs-test-harness/scripts/run-tests.sh" "${forwarded_args[@]+"${forwarded_args[@]}"}"
+bash "$repo_root/../fs-test-harness/scripts/run-tests.sh" "${forwarded_args[@]+"${forwarded_args[@]}"}"

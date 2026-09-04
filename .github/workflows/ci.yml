@@ -1,0 +1,208 @@
+# CI — what this repo did not have.
+#
+# Until now the only workflow here was release.yml, on tag push. So the
+# WinFSP half of the driver — `mod winfsp_adapter` in mount.rs, 1034 of
+# its 1786 lines, gated on `all(windows, feature = "mount")` — was only
+# ever compiled when someone cut a release.
+#
+# That is how this repo drifted onto am-fs-core v0.1.0 while the family
+# was on v0.2.4, and onto two floating `heads/main` refs, without
+# anything reporting it. A dependency bump could not be validated
+# without tagging a release, so it was not validated.
+#
+# This job is deliberately NOT release.yml with the uploads removed. It
+# reuses the same Rust / LLVM-MinGW / libclang / WinFsp setup, because
+# that is what makes the Windows half compile at all, and stops there:
+# no WiX, no MSI, no installer, no silent-install verification. Those
+# are release concerns and they are slow. What this answers is the one
+# question a pull request needs answered — does the driver still build
+# against its dependencies.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The portable half: everything outside `mod winfsp_adapter`. Cheap,
+  # fast, and catches most dependency drift before the expensive job
+  # even starts.
+  portable:
+    name: check (${{ matrix.os }}, no Windows features)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # winfsp-rs is needed HERE TOO, despite being Windows-only.
+          # Cargo resolves every path dependency when it parses the
+          # manifest, including ones under
+          # `[target.'cfg(windows)'.dependencies]` that this target will
+          # never build. Without the submodule the run dies before
+          # compiling anything:
+          #
+          #   error: failed to get `winfsp` as a dependency
+          #   Caused by: failed to read vendor/winfsp-rs/winfsp/Cargo.toml
+          #
+          # "It is Windows-only so Linux does not need it" is the
+          # intuition, and it is wrong: cargo needs the manifest to
+          # exist, not the code to compile.
+          submodules: recursive
+
+      - name: check out sibling repos
+        # The family repos are siblings, not submodules; the refs live
+        # in chores.yml so this reads them from there rather than
+        # restating them. chore itself is fetched at a pinned version —
+        # an unpinned installer would make this workflow depend on
+        # whatever chore shipped that morning, which is the opposite of
+        # what pinning the siblings is for.
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64)   asset="chore-0.9.0-linux-x86_64.tar.gz" ;;
+            Linux-aarch64)  asset="chore-0.9.0-linux-arm64.tar.gz" ;;
+            Darwin-arm64)   asset="chore-0.9.0-darwin-arm64.tar.gz" ;;
+            Darwin-x86_64)  asset="chore-0.9.0-darwin-x86_64.tar.gz" ;;
+            *) echo "no chore build for $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+          esac
+          curl -fsSL "https://github.com/antimatter-studios/chore/releases/download/v0.9.0/$asset" \
+            | sudo tar xz -C /usr/local/bin chore
+          chore siblings
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - run: cargo check --locked --no-default-features
+      - run: cargo clippy --locked --no-default-features --all-targets -- -D warnings
+      - run: cargo test --locked --no-default-features
+
+  # The half that only exists on Windows, and the reason this file is
+  # worth its runtime.
+  windows:
+    name: check (windows, mount + service)
+    runs-on: windows-latest
+    env:
+      LLVM_MINGW_VER: 20260421
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # vendor/winfsp-rs only. It is our fork of a third-party crate
+          # on the gnullvm-support branch, carrying a patch that is not
+          # ours to release — a submodule is the right tool for that,
+          # and the header patch below reaches into it.
+          submodules: recursive
+
+      - name: check out sibling repos
+        # chore publishes darwin and linux builds only, and `uname -s`
+        # under Git Bash reports MINGW64_NT-*, so there is nothing to
+        # install here. Cloning directly restates what `chore siblings`
+        # does — which is the duplication chores.yml exists to remove —
+        # so it reads the refs OUT OF chores.yml rather than hardcoding
+        # them, and the single declaration still holds.
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin() { sed -n "s/^  $1: *//p" chores.yml | tr -d '\r'; }
+          printf '%s\t%s\t%s\n' \
+            rust-fs-core       rust-fs-core.git       "$(pin FS_CORE_REF)" \
+            rust-fs-ext4      rust-fs-ext4.git      "$(pin FS_EXT4_REF)" \
+            winfsp-fs-skeleton winfsp-fs-skeleton.git "$(pin SKELETON_REF)" \
+            fs-test-harness    fs-test-harness.git    "$(pin HARNESS_REF)" \
+          | while IFS="$(printf '\t')" read -r name repo ref; do
+              echo "cloning $name at $ref"
+              git clone --quiet --depth 1 --branch "$ref" \
+                "https://github.com/antimatter-studios/$repo" "../$name"
+            done
+
+      - name: install Rust + gnullvm target
+        shell: pwsh
+        run: |
+          rustup install stable
+          rustup default stable
+          rustup target add x86_64-pc-windows-gnullvm
+          rustc --version
+
+      - name: install LLVM-MinGW (gnullvm toolchain)
+        shell: pwsh
+        run: |
+          # Provides the gnullvm runtime + sysroot. Its standalone
+          # release zip does NOT ship libclang.dll, so libclang for
+          # bindgen comes from the separate step below.
+          $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/${{ env.LLVM_MINGW_VER }}/llvm-mingw-${{ env.LLVM_MINGW_VER }}-ucrt-x86_64.zip"
+          $zip = "$env:RUNNER_TEMP\llvm-mingw.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath "$env:RUNNER_TEMP\llvm-mingw" -Force
+          $extracted = Get-ChildItem "$env:RUNNER_TEMP\llvm-mingw" -Directory | Select-Object -First 1
+          Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $extracted.FullName 'bin')
+
+      - name: install LLVM (libclang for bindgen)
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          # Pinned to 18.1 for the same reason release.yml pins it: old
+          # enough to parse LLVM-MinGW's clang-22 sysroot headers
+          # without the AVX-512 self-compile errors a same-version
+          # libclang trips on.
+          version: '18.1'
+          directory: ${{ runner.temp }}/llvm
+
+      - name: install WinFsp (build-time headers + libs)
+        shell: pwsh
+        run: choco install winfsp --yes --no-progress
+
+      - name: patch fsctl.h for the _ReadWriteBarrier collision
+        shell: pwsh
+        run: |
+          # clang's MSVC compatibility predefines _ReadWriteBarrier as a
+          # 0-arg function-like macro via intrin.h. WinFsp's fsctl.h then
+          # forward-declares `void _ReadWriteBarrier(void);`, which the
+          # preprocessor mangles into `void ;`. `-U_ReadWriteBarrier`
+          # does not help, because intrin.h is included after it.
+          #
+          # Wrap the forward-decl in push_macro / undef / pop_macro so
+          # the macro is hidden at exactly the point the function has to
+          # be declared. Both the vendored header and the choco-installed
+          # one are patched, since which is read depends on winfsp-sys's
+          # `system` feature. Kept identical to release.yml: if these two
+          # ever disagree, CI stops predicting the release.
+          $needle = '    void _ReadWriteBarrier(void);'
+          $replacement = "#pragma push_macro(`"_ReadWriteBarrier`")`n#undef _ReadWriteBarrier`n    void _ReadWriteBarrier(void);`n#pragma pop_macro(`"_ReadWriteBarrier`")"
+          foreach ($f in @(
+            'vendor/winfsp-rs/winfsp-sys/winfsp/inc/winfsp/fsctl.h',
+            'C:\Program Files (x86)\WinFsp\inc\winfsp\fsctl.h'
+          )) {
+            if (-not (Test-Path $f)) { "Skipping (not found): $f"; continue }
+            $content = Get-Content $f -Raw
+            Set-Content -Path $f -Value ($content -replace [regex]::Escape($needle), $replacement) -NoNewline
+            "Patched $f"
+          }
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: windows-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: cargo check --features mount,service
+        shell: pwsh
+        run: cargo check --locked --features mount,service --target x86_64-pc-windows-gnullvm
