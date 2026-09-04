@@ -54,16 +54,29 @@ ctrlc = "3"
 # MSVC-only gate so the same MSVC-format .lib (consumed via lld-link)
 # works for *-pc-windows-gnullvm Rust toolchains too.
 #
-# Deliberately NOT enabling winfsp-sys's `system` feature. That would
-# point bindgen at the registry-discovered system install
+# NOT enabling winfsp-sys's `system` feature -- and this time the code
+# agrees with the comment. It said exactly this while the line beneath
+# it enabled `system` anyway, and the two disagreed for long enough
+# that nobody noticed, because this repo had no CI to compile the
+# Windows half on.
+#
+# `system` points bindgen at the registry-discovered install
 # (C:\Program Files (x86)\WinFsp\inc) instead of the vendored
-# winfsp-sys/winfsp/inc tree -- and the CI's _ReadWriteBarrier patch
-# step (release.yml) only touches the vendored copy. Keeping the
-# vendored path means CI patches what bindgen actually reads, and we
-# pin the exact header version we tested against rather than tracking
-# whatever choco's winfsp package ships this week. Runtime behaviour
-# is identical either way (both link via delayload of winfsp-x64.dll).
-winfsp = { path = "vendor/winfsp-rs/winfsp", features = ["delayload", "system"], optional = true, default-features = false }
+# winfsp-sys/winfsp/inc tree. Two things follow, and both bit:
+#
+#   1. The header becomes whatever choco's winfsp package ships this
+#      week, so the build is not reproducible.
+#   2. bindgen's constant signedness follows that header. Against the
+#      pinned fork revision it emitted the guard-strategy constants as
+#      u32 while fshost.rs declares `const RAW: i32`, and winfsp itself
+#      failed to compile with three E0308s -- in a dependency, from a
+#      header nobody in this repo controls.
+#
+# Reading the vendored tree pins the exact header version, and CI
+# patches that copy for the _ReadWriteBarrier collision, so bindgen
+# reads what CI patched. Runtime behaviour is unchanged either way:
+# both link by delayload of winfsp-x64.dll.
+winfsp = { path = "vendor/winfsp-rs/winfsp", features = ["delayload"], optional = true, default-features = false }
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
