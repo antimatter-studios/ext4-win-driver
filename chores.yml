@@ -50,7 +50,7 @@ vars:
   # fixed nothing. Bump this when the skeleton next releases -- its
   # `translate` and `reader` modules are what this driver will move to.
   SKELETON_URL: https://github.com/antimatter-studios/winfsp-fs-skeleton.git
-  SKELETON_REF: v0.1.1
+  SKELETON_REF: v0.2.0
   HARNESS_URL: https://github.com/antimatter-studios/fs-test-harness.git
   HARNESS_REF: v3.11.0
 

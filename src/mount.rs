@@ -398,24 +398,17 @@ mod winfsp_adapter {
     /// the C ABI side.
     const KEEP_UNCHANGED: u32 = u32::MAX;
 
-    /// Seconds between Windows FILETIME epoch (1601-01-01) and Unix epoch (1970-01-01).
-    const FILETIME_EPOCH_OFFSET_SEC: u64 = 11_644_473_600;
-
-    /// Convert a unix-epoch-seconds timestamp to FILETIME (100-ns intervals
-    /// since 1601). Saturating on overflow — ext4 timestamps fit in 32 bits
-    /// (or 64 with high-precision attrs), well within u64 FILETIME range.
-    fn unix_to_filetime(secs: u32) -> u64 {
-        (FILETIME_EPOCH_OFFSET_SEC.saturating_add(secs as u64)).saturating_mul(10_000_000)
-    }
-
-    /// Convert a unix timestamp with nanosecond precision to FILETIME.
-    /// FILETIME resolution is 100 ns; we round nsec down to the nearest 100 ns.
-    fn unix_to_filetime_nsec(secs: u32, nsec: u32) -> u64 {
-        let whole_second_ticks =
-            (FILETIME_EPOCH_OFFSET_SEC.saturating_add(secs as u64)).saturating_mul(10_000_000);
-        let sub_second_ticks = (nsec / 100) as u64;
-        whole_second_ticks.saturating_add(sub_second_ticks)
-    }
+    // The Unix-to-FILETIME conversion lives in winfsp-fs-skeleton, not
+    // here. This module had two copies of it, both taking `u32`
+    // seconds; the erofs and xfs drivers had a third and a fourth,
+    // taking `u64`. Four implementations of one conversion at three
+    // widths, and the widest still could not express a date before
+    // 1970 -- even though FILETIME's epoch is 1601 and represents it
+    // perfectly well.
+    //
+    // The shared one takes `i64`, which is what am-fs-ext4 0.5.0 now
+    // reports, so these call sites need no casts.
+    use winfsp_fs_skeleton::translate::unix_to_filetime;
 
     /// Apply a `FILE_FULL_EA_INFORMATION` buffer to `path` on `fs`.
     ///
@@ -500,12 +493,12 @@ mod winfsp_adapter {
         info.allocation_size = (attr.size + 4095) & !4095;
         // Use sub-second precision where available (crtime_nsec / mtime_nsec may
         // be 0 on old ext2/3 inodes; the fallback in fill_attr zeros the nsec fields).
-        let ct = unix_to_filetime_nsec(attr.crtime, attr.crtime_nsec)
-            .max(unix_to_filetime_nsec(attr.mtime, attr.mtime_nsec));
+        let ct = unix_to_filetime(attr.crtime, attr.crtime_nsec)
+            .max(unix_to_filetime(attr.mtime, attr.mtime_nsec));
         info.creation_time = ct;
-        info.last_access_time = unix_to_filetime_nsec(attr.atime, attr.atime_nsec);
-        info.last_write_time = unix_to_filetime_nsec(attr.mtime, attr.mtime_nsec);
-        info.change_time = unix_to_filetime_nsec(attr.ctime, attr.ctime_nsec);
+        info.last_access_time = unix_to_filetime(attr.atime, attr.atime_nsec);
+        info.last_write_time = unix_to_filetime(attr.mtime, attr.mtime_nsec);
+        info.change_time = unix_to_filetime(attr.ctime, attr.ctime_nsec);
         info.index_number = attr.inode as u64;
         info.hard_links = attr.link_count as u32;
         info.ea_size = 0;
