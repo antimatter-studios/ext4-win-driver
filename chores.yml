@@ -34,14 +34,24 @@ vars:
   # The family pins. One place, read by both `chore siblings` and the
   # CI workflow -- CI parses them out of this file rather than
   # restating them, so bumping one is still a one-line edit.
+  # URL as well as ref, because the family is NOT all in one org --
+  # rust-fs-ext4 and rust-fs-ntfs live under christhomas/ while the rest
+  # are under antimatter-studios/. Anything that reconstructs a URL from
+  # the repo name gets that wrong for exactly two of them, and the
+  # failure is an interactive credential prompt on a private-looking
+  # URL rather than a clean 404, so it reads as an auth problem.
+  FS_CORE_URL: https://github.com/antimatter-studios/rust-fs-core.git
   FS_CORE_REF: v0.2.4
+  FS_EXT4_URL: https://github.com/christhomas/rust-fs-ext4.git
   FS_EXT4_REF: v0.5.0
   # Pinned to the tag, not to `main`. A floating ref was one of the two
   # things wrong with the submodule setup this file replaces, and
   # swapping a floating submodule for a floating sibling would have
   # fixed nothing. Bump this when the skeleton next releases -- its
   # `translate` and `reader` modules are what this driver will move to.
+  SKELETON_URL: https://github.com/antimatter-studios/winfsp-fs-skeleton.git
   SKELETON_REF: v0.1.1
+  HARNESS_URL: https://github.com/antimatter-studios/fs-test-harness.git
   HARNESS_REF: v3.11.0
 
 tasks:
@@ -56,10 +66,10 @@ tasks:
         set -eu
         # name<TAB>url<TAB>ref
         printf '%s\t%s\t%s\n' \
-          rust-fs-core       https://github.com/antimatter-studios/rust-fs-core.git       '{{.FS_CORE_REF}}' \
-          rust-fs-ext4      https://github.com/antimatter-studios/rust-fs-ext4.git      '{{.FS_EXT4_REF}}' \
-          winfsp-fs-skeleton https://github.com/antimatter-studios/winfsp-fs-skeleton.git '{{.SKELETON_REF}}' \
-          fs-test-harness    https://github.com/antimatter-studios/fs-test-harness.git    '{{.HARNESS_REF}}' \
+          rust-fs-core       '{{.FS_CORE_URL}}' '{{.FS_CORE_REF}}' \
+          rust-fs-ext4       '{{.FS_EXT4_URL}}' '{{.FS_EXT4_REF}}' \
+          winfsp-fs-skeleton '{{.SKELETON_URL}}' '{{.SKELETON_REF}}' \
+          fs-test-harness    '{{.HARNESS_URL}}' '{{.HARNESS_REF}}' \
         | while IFS="$(printf '\t')" read -r name url ref; do
             dir="../$name"
 

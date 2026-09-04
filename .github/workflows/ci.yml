@@ -122,15 +122,21 @@ jobs:
         run: |
           set -euo pipefail
           pin() { sed -n "s/^  $1: *//p" chores.yml | tr -d '\r'; }
+          # URL as well as ref. The family is not all in one org --
+          # rust-fs-ext4 lives under christhomas/ while its siblings are
+          # under antimatter-studios/ -- so reconstructing a URL from
+          # the repo name silently points at a repo that does not exist.
+          # git then prompts for credentials, and the run dies with
+          # "could not read Username", which reads as an auth problem
+          # rather than a wrong URL.
           printf '%s\t%s\t%s\n' \
-            rust-fs-core       rust-fs-core.git       "$(pin FS_CORE_REF)" \
-            rust-fs-ext4      rust-fs-ext4.git      "$(pin FS_EXT4_REF)" \
-            winfsp-fs-skeleton winfsp-fs-skeleton.git "$(pin SKELETON_REF)" \
-            fs-test-harness    fs-test-harness.git    "$(pin HARNESS_REF)" \
-          | while IFS="$(printf '\t')" read -r name repo ref; do
+            rust-fs-core       "$(pin FS_CORE_URL)" "$(pin FS_CORE_REF)" \
+            rust-fs-ext4       "$(pin FS_EXT4_URL)" "$(pin FS_EXT4_REF)" \
+            winfsp-fs-skeleton "$(pin SKELETON_URL)" "$(pin SKELETON_REF)" \
+            fs-test-harness    "$(pin HARNESS_URL)" "$(pin HARNESS_REF)" \
+          | while IFS="$(printf '\t')" read -r name url ref; do
               echo "cloning $name at $ref"
-              git clone --quiet --depth 1 --branch "$ref" \
-                "https://github.com/antimatter-studios/$repo" "../$name"
+              git clone --quiet --depth 1 --branch "$ref" "$url" "../$name"
             done
 
       - name: install Rust + gnullvm target
