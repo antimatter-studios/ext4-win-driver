@@ -57,7 +57,7 @@ vars:
   # guard-strategy constant signed while bindgen emits it unsigned for
   # that target.
   WINFSP_RS_URL: https://github.com/antimatter-studios/winfsp-rs.git
-  WINFSP_RS_REF: 2f1ea36bf508a4fb2cc603a7ec14289a0bb16497
+  WINFSP_RS_REF: 59ab48bca2a67c95d4eba640343b6b80b87bb6ea
   HARNESS_URL: https://github.com/antimatter-studios/fs-test-harness.git
   HARNESS_REF: v3.11.0
 
