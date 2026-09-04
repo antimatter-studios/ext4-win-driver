@@ -73,8 +73,14 @@ jobs:
             winfsp-rs          "$(pin WINFSP_RS_URL)" "$(pin WINFSP_RS_REF)" \
           | while IFS="$(printf '\t')" read -r name url ref; do
               echo "cloning $name at $ref"
-              git clone --quiet "$url" "../$name"
-              git -C "../$name" checkout --quiet "$ref"
+              # init + fetch-by-ref, not clone. winfsp-rs is pinned to a
+              # bare commit that no published branch contains, so a
+              # plain clone does not have it and `--branch` cannot name
+              # it. Asking the server for the SHA directly does work.
+              git init --quiet "../$name"
+              git -C "../$name" remote add origin "$url"
+              git -C "../$name" fetch --quiet --depth 1 origin "$ref"
+              git -C "../$name" checkout --quiet FETCH_HEAD
             done
 
       - name: install Rust + gnullvm target

@@ -83,10 +83,16 @@ tasks:
 
             if [ ! -d "$dir/.git" ]; then
               echo "siblings: cloning $name at $ref"
-              # Clone then checkout, rather than --branch: one of these
-              # refs is a commit, which --branch cannot take.
-              git clone --quiet "$url" "$dir"
-              git -C "$dir" checkout --quiet "$ref"
+              # init + fetch-by-ref, not clone. One of these refs is a
+              # bare commit, and `git clone --branch` takes a ref NAME
+              # only. A plain clone does not help either: that commit is
+              # reachable from no published branch, so it simply is not
+              # in the result. `git fetch origin <sha>` asks the server
+              # for it directly, which GitHub serves.
+              git init --quiet "$dir"
+              git -C "$dir" remote add origin "$url"
+              git -C "$dir" fetch --quiet --depth 1 origin "$ref"
+              git -C "$dir" checkout --quiet FETCH_HEAD
               continue
             fi
 
@@ -97,14 +103,17 @@ tasks:
             fi
 
             current=$(git -C "$dir" rev-parse HEAD)
-            git -C "$dir" fetch --quiet --tags origin
-            wanted=$(git -C "$dir" rev-parse "$ref^{commit}")
+            # Fetch the ref itself rather than everything: this also has
+            # to work for a bare commit that no branch contains, which
+            # `fetch --tags` would never bring down.
+            git -C "$dir" fetch --quiet origin "$ref"
+            wanted=$(git -C "$dir" rev-parse FETCH_HEAD)
             if [ "$current" = "$wanted" ]; then
               echo "siblings: $name already at $ref"
               continue
             fi
             echo "siblings: moving $name to $ref"
-            git -C "$dir" checkout --quiet "$ref"
+            git -C "$dir" checkout --quiet FETCH_HEAD
           done
 
   siblings:check:
