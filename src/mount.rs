@@ -384,7 +384,7 @@ mod winfsp_adapter {
     // Fine requires the context to be Sync while Coarse only needs Send.
     // Leaving it inferred picks FineGuard, which is what this driver was
     // asking for explicitly.
-    use winfsp::host::{FileSystemHost, FileSystemParams, VolumeParams};
+    use winfsp::host::{FileSystemHost, FileSystemParams, FineGuard, VolumeParams};
     use winfsp::Result as FspResult;
     use winfsp_sys::{FILE_ACCESS_RIGHTS, FILE_FLAGS_AND_ATTRIBUTES};
 
@@ -1501,7 +1501,17 @@ mod winfsp_adapter {
             params.read_only_volume(true);
         }
 
-        let mut host = FileSystemHost::new_with_options(
+        // The guard strategy is named rather than inferred. 0.13.0 has
+        // two impls whose methods collide when S is open -- a general
+        // one over any OperationGuardStrategy and a FineGuard-specific
+        // one requiring the context to be Sync -- so leaving it to
+        // inference is E0034, "multiple applicable items in scope", at
+        // the mount call rather than here.
+        //
+        // FineGuard is what this driver wants: WinFsp guards namespace
+        // operations with a read-write lock and leaves file I/O
+        // concurrent, so reads on different files do not serialise.
+        let mut host = FileSystemHost::<_, FineGuard>::new_with_options(
             FileSystemParams {
                 use_dir_info_by_name: true,
                 volume_params: params,
