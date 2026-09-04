@@ -51,6 +51,13 @@ vars:
   # `translate` and `reader` modules are what this driver will move to.
   SKELETON_URL: https://github.com/antimatter-studios/winfsp-fs-skeleton.git
   SKELETON_REF: v0.2.1
+  # Pinned to a COMMIT, not a branch. This is a fork of a third-party
+  # crate, so there is no release cadence of ours to track, and upstream
+  # 0.13.0 does not compile for *-pc-windows-gnullvm -- it declares the
+  # guard-strategy constant signed while bindgen emits it unsigned for
+  # that target.
+  WINFSP_RS_URL: https://github.com/antimatter-studios/winfsp-rs.git
+  WINFSP_RS_REF: 2f1ea36bf508a4fb2cc603a7ec14289a0bb16497
   HARNESS_URL: https://github.com/antimatter-studios/fs-test-harness.git
   HARNESS_REF: v3.11.0
 
@@ -70,12 +77,22 @@ tasks:
           rust-fs-ext4       '{{.FS_EXT4_URL}}' '{{.FS_EXT4_REF}}' \
           winfsp-fs-skeleton '{{.SKELETON_URL}}' '{{.SKELETON_REF}}' \
           fs-test-harness    '{{.HARNESS_URL}}' '{{.HARNESS_REF}}' \
+          winfsp-rs          '{{.WINFSP_RS_URL}}' '{{.WINFSP_RS_REF}}' \
         | while IFS="$(printf '\t')" read -r name url ref; do
             dir="../$name"
 
             if [ ! -d "$dir/.git" ]; then
               echo "siblings: cloning $name at $ref"
-              git clone --quiet --branch "$ref" "$url" "$dir"
+              # init + fetch-by-ref, not clone. One of these refs is a
+              # bare commit, and `git clone --branch` takes a ref NAME
+              # only. A plain clone does not help either: that commit is
+              # reachable from no published branch, so it simply is not
+              # in the result. `git fetch origin <sha>` asks the server
+              # for it directly, which GitHub serves.
+              git init --quiet "$dir"
+              git -C "$dir" remote add origin "$url"
+              git -C "$dir" fetch --quiet --depth 1 origin "$ref"
+              git -C "$dir" checkout --quiet FETCH_HEAD
               continue
             fi
 
@@ -86,14 +103,17 @@ tasks:
             fi
 
             current=$(git -C "$dir" rev-parse HEAD)
-            git -C "$dir" fetch --quiet --tags origin
-            wanted=$(git -C "$dir" rev-parse "$ref^{commit}")
+            # Fetch the ref itself rather than everything: this also has
+            # to work for a bare commit that no branch contains, which
+            # `fetch --tags` would never bring down.
+            git -C "$dir" fetch --quiet origin "$ref"
+            wanted=$(git -C "$dir" rev-parse FETCH_HEAD)
             if [ "$current" = "$wanted" ]; then
               echo "siblings: $name already at $ref"
               continue
             fi
             echo "siblings: moving $name to $ref"
-            git -C "$dir" checkout --quiet "$ref"
+            git -C "$dir" checkout --quiet FETCH_HEAD
           done
 
   siblings:check:

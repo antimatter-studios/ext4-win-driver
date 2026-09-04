@@ -45,10 +45,43 @@ jobs:
       # them directly to avoid winget's interactive prompts.
 
     steps:
-      - name: checkout (with submodules)
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
+      - uses: actions/checkout@v4
+        # No submodules; there are none left.
+
+      - name: check out sibling repos
+        # THIS STEP WAS MISSING. When the family repos moved from
+        # submodules to siblings, only ci.yml gained a checkout for
+        # them -- this workflow kept `submodules: recursive`, which by
+        # then pulled in nothing, so a release build would have found
+        # no siblings at all and failed at manifest parse. It only went
+        # unnoticed because release.yml runs on tag push, and no tag was
+        # pushed in between.
+        #
+        # Cloned directly rather than through `chore siblings`: chore
+        # publishes darwin and linux builds only, and `uname -s` under
+        # Git Bash reports MINGW64_NT-*. Kept identical to ci.yml -- if
+        # the two drift, CI stops predicting the release.
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin() { sed -n "s/^  $1: *//p" chores.yml | tr -d '\r'; }
+          printf '%s\t%s\t%s\n' \
+            rust-fs-core       "$(pin FS_CORE_URL)" "$(pin FS_CORE_REF)" \
+            rust-fs-ext4       "$(pin FS_EXT4_URL)" "$(pin FS_EXT4_REF)" \
+            winfsp-fs-skeleton "$(pin SKELETON_URL)" "$(pin SKELETON_REF)" \
+            fs-test-harness    "$(pin HARNESS_URL)" "$(pin HARNESS_REF)" \
+            winfsp-rs          "$(pin WINFSP_RS_URL)" "$(pin WINFSP_RS_REF)" \
+          | while IFS="$(printf '\t')" read -r name url ref; do
+              echo "cloning $name at $ref"
+              # init + fetch-by-ref, not clone. winfsp-rs is pinned to a
+              # bare commit that no published branch contains, so a
+              # plain clone does not have it and `--branch` cannot name
+              # it. Asking the server for the SHA directly does work.
+              git init --quiet "../$name"
+              git -C "../$name" remote add origin "$url"
+              git -C "../$name" fetch --quiet --depth 1 origin "$ref"
+              git -C "../$name" checkout --quiet FETCH_HEAD
+            done
 
       - name: install Rust + gnullvm target
         shell: pwsh
