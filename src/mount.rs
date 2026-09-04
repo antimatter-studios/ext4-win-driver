@@ -377,7 +377,7 @@ mod winfsp_adapter {
         OpenFileInfo, VolumeInfo, WideNameInfo,
     };
     use winfsp::host::DebugMode;
-    use winfsp::host::{FileSystemHost, FileSystemParams, VolumeParams};
+    use winfsp::host::{FileSystemHost, FileSystemParams, OperationGuardStrategy, VolumeParams};
     use winfsp::Result as FspResult;
     use winfsp_sys::{FILE_ACCESS_RIGHTS, FILE_FLAGS_AND_ATTRIBUTES};
 
@@ -1498,6 +1498,13 @@ mod winfsp_adapter {
             FileSystemParams {
                 use_dir_info_by_name: true,
                 volume_params: params,
+                // Fine-grained locking: WinFsp guards namespace
+                // operations with a read-write lock and leaves file I/O
+                // concurrent, so reads on different files do not
+                // serialise. This is the strategy the crate defaults
+                // to, stated explicitly because it is a field here
+                // rather than a type parameter.
+                guard_strategy: OperationGuardStrategy::Fine,
                 debug_mode: DebugMode::none(),
             },
             ctx,
