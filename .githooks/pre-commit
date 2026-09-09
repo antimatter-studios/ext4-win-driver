@@ -6,10 +6,12 @@
 # Enable once per clone (and again after editing this file):
 #   ./scripts/install-hooks.sh
 #
-# That copies .githooks/ into .git/hooks. It deliberately does NOT set
-# core.hooksPath: git resolves a hook path after a checkout has rewritten the
-# working tree, so hooks living in the tree can be replaced by whatever branch
-# you check out. See the header of scripts/install-hooks.sh.
+# That copies the hooks into .git/hooks, reading them from the remote-tracking
+# default branch rather than from the checkout. Git resolves a hook path after a
+# checkout has rewritten the working tree, so hooks living in the tree can be
+# replaced by whatever branch you check out — and installing FROM the checkout
+# would make that branch's hook persistent. Editing the hooks themselves needs
+# INSTALL_HOOKS_FROM_WORKTREE=1; see the header of scripts/install-hooks.sh.
 #
 # Skip for a single WIP commit (use sparingly):
 #   git commit --no-verify
