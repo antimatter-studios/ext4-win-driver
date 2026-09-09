@@ -48,6 +48,17 @@ cd "$(git rev-parse --show-toplevel)"
 hooks="$(cd "$(git rev-parse --git-common-dir)" && pwd)/hooks"
 manifest="$hooks/.install-hooks.manifest"
 
+# Every path that reaches `rm` is checked first. The manifest is an ordinary
+# local file: corrupt or hand-edited, an entry like ../../config would resolve
+# outside the hooks directory and be deleted. Git trees cannot carry a ".."
+# component, so this only ever rejects damage — but the prune must not be the
+# thing that trusts a file blindly.
+safe_rel() {
+  case "$1" in "" | /*) return 1 ;; esac
+  case "/$1/" in */../*) return 1 ;; esac
+  return 0
+}
+
 # --- refuse to trample a deliberate hooks path ------------------------------
 # Clearing only OUR legacy value. Unsetting whatever we find would silently
 # discard someone's intentional setup, and this script can run unattended.
@@ -108,6 +119,7 @@ done <<< "$files"
 # tool-managed hook, silently rewritten.
 while IFS= read -r rel; do
   [ -n "$rel" ] || continue
+  safe_rel "$rel" || { echo "install-hooks: refusing to touch '$rel' — not a path under the hooks dir." >&2; exit 1; }
   mkdir -p "$hooks/$(dirname "$rel")"
   rm -f "$hooks/$rel"
 done <<< "$files"
@@ -131,6 +143,7 @@ if [ -n "$prev" ]; then
   while IFS= read -r rel; do
     [ -n "$rel" ] || continue
     printf '%s\n' "$files" | grep -qxF "$rel" && continue
+    safe_rel "$rel" || { echo "install-hooks: ignoring manifest entry '$rel' — not a path under the hooks dir." >&2; continue; }
     rm -f "$hooks/$rel"
     echo "install-hooks: removed $rel, which is no longer part of the hook set."
   done <<< "$prev"
