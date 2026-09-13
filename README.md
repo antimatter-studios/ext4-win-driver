@@ -24,7 +24,7 @@ Scope:
    only run one installer.
 
 The `fs-ext4` library lives at [`../rust-fs-ext4/`](../rust-fs-ext4)
-(git submodule from [christhomas/rust-fs-ext4](https://github.com/christhomas/rust-fs-ext4))
+(sibling checkout of [christhomas/rust-fs-ext4](https://github.com/christhomas/rust-fs-ext4), pinned in `chores.yml`)
 and is path-depended; this crate is the distribution unit.
 
 The Windows-driver scaffolding (SCM service, disk-arrival watcher,
@@ -141,7 +141,7 @@ or use one of the system-wide knobs below:
   -ReadOnly` for one-off RO mounts.
 
 The legacy `--rw` flag is still accepted (silently) so existing scripts
-and `harness.toml` configs that pre-date the flip don't break.
+and `fs-test-harness.toml` configs that pre-date the flip don't break.
 
 Watch mode (foreground variant of the service, useful for dev / debugging):
 
@@ -165,7 +165,7 @@ ntfs, ...) without copy-paste. The boundary:
 | `probe` -- drive-letter selection, `GUID_DEVINTERFACE_DISK`, `DEV_BROADCAST_DEVICEINTERFACE_W` parsing | |
 | `templates/installer/` -- WiX MSI + Burn shapes | [`installer/`](./installer/) -- ext4-customised copies of the templates |
 | `templates/release.yml` -- GH Actions x64 + arm64 build matrix | [`.github/workflows/release.yml`](./.github/workflows/release.yml) |
-| `templates/winget/` -- manifest skeleton | [`winget/v0.1.0/`](./winget/v0.1.0/) -- the actual submission |
+| `templates/winget/` -- manifest skeleton | [`winget/v0.2.0/`](./winget/v0.2.0/) -- the actual submission |
 
 The public seam is one trait + four constants:
 
@@ -215,16 +215,17 @@ where the LocalSystem PATH doesn't reach the LLVM-MinGW runtime dir.
 - **WinFsp 2.1+** installed on the build/run machine
   ([winfsp.dev](https://winfsp.dev/) -> MSI, or `winget install WinFsp.WinFsp`).
 - A forked
-  [winfsp-rs](https://github.com/antimatter-studios/winfsp-rs) is a
-  git submodule at [`vendor/winfsp-rs/`](./vendor/winfsp-rs) on the
-  `gnullvm-support` branch (path-depended; the upstream PR is pending).
-  The fork also requires:
+  [winfsp-rs](https://github.com/antimatter-studios/winfsp-rs), checked
+  out as a **sibling** at `../winfsp-rs` and pinned to a commit in
+  `chores.yml` (the upstream PR is pending). `chore siblings` fetches
+  it along with every other dependency; there are no git submodules in
+  this repo. The fork also requires:
   - `LLVM` for `libclang.dll` (`winget install LLVM.LLVM`)
   - LLVM-MinGW (`winget install MartinStorsjo.LLVM-MinGW.UCRT`)
 - `LIBCLANG_PATH=C:\Program Files\LLVM\bin` so bindgen can find `libclang.dll`.
-- [winfsp-fs-skeleton](https://github.com/antimatter-studios/winfsp-fs-skeleton)
-  is a git submodule at [`../winfsp-fs-skeleton/`](../winfsp-fs-skeleton);
-  pure Rust, no extra toolchain requirements.
+- [winfsp-fs-skeleton](https://github.com/antimatter-studios/winfsp-fs-skeleton),
+  a sibling checkout at `../winfsp-fs-skeleton`; pure Rust, no extra
+  toolchain requirements.
 
 ### Building the installer
 
@@ -243,15 +244,20 @@ Produces `dist\ext4-win-driver-<ver>-arm64.msi` and
 ## Testing
 
 Scenarios live in [`test-matrix.json`](./test-matrix.json) and the per-project
-adapter config in [`harness.toml`](./harness.toml). Both are consumed by the
+adapter config in [`fs-test-harness.toml`](./fs-test-harness.toml). Both are consumed by the
 shared [`fs-test-harness`](https://github.com/antimatter-studios/fs-test-harness),
-vendored as a git submodule at [`../fs-test-harness/`](../fs-test-harness).
+checked out as a sibling at `../fs-test-harness`.
 
-After cloning, initialise the submodules:
+After cloning, fetch the siblings:
 
 ```sh
-git submodule update --init --recursive
+chore siblings
 ```
+
+That clones or moves every dependency this crate builds against to the
+ref pinned in `chores.yml`, next to this repo rather than inside it. It
+refuses to move a sibling with uncommitted work rather than discarding
+it.
 
 Run the test matrix (Mac -> SSH -> Windows VM -> diag pull):
 
@@ -272,11 +278,14 @@ for how to read a failure, and
 [`docs/multi-agent-protocol.md`](../fs-test-harness/docs/multi-agent-protocol.md)
 for running multiple agents against the same matrix.
 
-To update a vendored submodule when its upstream releases:
+To move to a newer release of a dependency, edit its `*_REF` in
+`chores.yml` and re-run `chore siblings`. The pin lives in one place, so
+that is the whole change:
 
 ```sh
-git submodule update --remote --merge ../fs-test-harness
-git add ../fs-test-harness && git commit -m "chore: bump fs-test-harness submodule"
+$EDITOR chores.yml     # HARNESS_REF: v3.11.0 -> v3.12.0
+chore siblings
+chore siblings:check   # report what is checked out, changing nothing
 ```
 
 ## License
