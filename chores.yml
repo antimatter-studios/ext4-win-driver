@@ -21,14 +21,15 @@ chore_min_version: 0.6.0
 #     `heads/main` -- floating refs, which the dependency-pinning policy
 #     forbids outright, and which mean the build was not reproducible.
 #
-#   THIRD-PARTY FORKS -> stay submodules.
-#     vendor/winfsp-rs is our fork of SnowflakePowered/winfsp-rs on the
+#   THIRD-PARTY FORKS -> siblings as well, pinned to a COMMIT.
+#     winfsp-rs is our fork of SnowflakePowered/winfsp-rs on the
 #     gnullvm-support branch, carrying a patch that is not ours to
-#     release and not on a schedule we control. It does not belong in a
-#     sibling checkout beside crates we own, the release workflow
-#     PATCHES a header inside it, and there is no expectation that
-#     other repos on this machine want the same revision. A submodule
-#     is the right tool for exactly this shape, and it keeps it.
+#     release and not on a schedule we control. It used to be a
+#     submodule at vendor/winfsp-rs; it is now checked out at
+#     ../winfsp-rs like everything else, so there are no submodules
+#     left. Because a fork has no release cadence of ours, it is pinned
+#     to a bare commit (WINFSP_RS_REF) rather than a tag, and both CI
+#     workflows patch a header inside that checkout.
 
 vars:
   # The family pins. One place, read by both `chore siblings` and the

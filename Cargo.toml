@@ -48,8 +48,8 @@ ctrlc = "3"
 # `mount` feature is enabled AND the build target is Windows. On macOS
 # the `mount` feature does nothing (the cfg-gated module is empty).
 #
-# Path-depended on the antimatter-studios fork of winfsp-rs (vendored
-# checked out as a sibling at ../winfsp-rs) until our gnullvm-support PR lands upstream
+# Path-depended on the antimatter-studios fork of winfsp-rs (checked out
+# as a sibling at ../winfsp-rs) until our gnullvm-support PR lands upstream
 # at SnowflakePowered/winfsp-rs. The patch lifts winfsp-sys/build.rs's
 # MSVC-only gate so the same MSVC-format .lib (consumed via lld-link)
 # works for *-pc-windows-gnullvm Rust toolchains too.
