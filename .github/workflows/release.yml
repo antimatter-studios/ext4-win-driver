@@ -69,7 +69,7 @@ jobs:
             rust-fs-core       "$(pin FS_CORE_URL)" "$(pin FS_CORE_REF)" \
             rust-fs-ext4       "$(pin FS_EXT4_URL)" "$(pin FS_EXT4_REF)" \
             winfsp-fs-skeleton "$(pin SKELETON_URL)" "$(pin SKELETON_REF)" \
-            fs-test-harness    "$(pin HARNESS_URL)" "$(pin HARNESS_REF)" \
+            fs-windows-test-harness "$(pin HARNESS_URL)" "$(pin HARNESS_REF)" \
             winfsp-rs          "$(pin WINFSP_RS_URL)" "$(pin WINFSP_RS_REF)" \
           | while IFS="$(printf '\t')" read -r name url ref; do
               echo "cloning $name at $ref"
