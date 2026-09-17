@@ -133,7 +133,7 @@ jobs:
           wix eula accept wix7
           wix --version
 
-      - name: patch vendored fsctl.h for x86 MSVC-compat _ReadWriteBarrier collision
+      - name: patch fsctl.h for x86 MSVC-compat _ReadWriteBarrier collision
         if: matrix.arch == 'x64'
         shell: pwsh
         run: |
@@ -154,7 +154,12 @@ jobs:
           # point we need to declare the function.
           # arm64 hits a different code branch (__dmb intrinsic) so
           # this patch is x86-only.
-          $f = 'vendor/winfsp-rs/winfsp-sys/winfsp/inc/winfsp/fsctl.h'
+          #
+          # The header lives in the winfsp-rs SIBLING checkout. This read
+          # `vendor/winfsp-rs/...` until winfsp-rs stopped being a
+          # submodule, which would have failed the next x64 release at
+          # Get-Content. ci.yml already used the sibling path.
+          $f = '../winfsp-rs/winfsp-sys/winfsp/inc/winfsp/fsctl.h'
           $content = Get-Content $f -Raw
           $needle = '    void _ReadWriteBarrier(void);'
           $replacement = "#pragma push_macro(`"_ReadWriteBarrier`")`n#undef _ReadWriteBarrier`n    void _ReadWriteBarrier(void);`n#pragma pop_macro(`"_ReadWriteBarrier`")"

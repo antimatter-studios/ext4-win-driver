@@ -85,12 +85,12 @@ read -r image_type image_file <<< "$result"
 echo "[test-mount] scenario=$SCENARIO  image_type=$image_type  image=$image_file  flags=${EXTRA_FLAGS[*]+${EXTRA_FLAGS[*]}}"
 
 # ── Ensure Alpine builder VM is running ───────────────────────────────────────
-env_file="$repo_root/vendor/rust-fs-ext4/test-disks/.vm-cache/server.env"
-builder_script="$repo_root/vendor/rust-fs-ext4/test-disks/build-ext4-feature-images.sh"
+env_file="$repo_root/../rust-fs-ext4/test-disks/.vm-cache/server.env"
+builder_script="$repo_root/../rust-fs-ext4/test-disks/build-ext4-feature-images.sh"
 
 [[ -f "$builder_script" ]] || {
     echo "ERROR: builder script not found: $builder_script" >&2
-    echo "       run: git submodule update --init --recursive" >&2
+    echo "       run: chore siblings" >&2
     exit 1
 }
 

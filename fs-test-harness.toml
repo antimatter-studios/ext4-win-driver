@@ -68,8 +68,8 @@ env_prefix = "$env:LIBCLANG_PATH = 'C:\\Program Files\\LLVM\\bin';"
 [run]
 # Host-side image dir for v2 op-defs. The canonical test images are
 # build artefacts produced by `build-test-disks.sh` in the rust-fs-ext4
-# sibling project — they're not tracked in git, so the vendored
-# ../rust-fs-ext4/test-disks/ is empty. Set HOST_IMAGE_DIR in
+# sibling project — they're not tracked in git, so a fresh sibling
+# checkout's ../rust-fs-ext4/test-disks/ has none. Set HOST_IMAGE_DIR in
 # .test-env to point at your local copy; defaults to diskimages/.
 image_dir = "${HOST_IMAGE_DIR:-diskimages}"
 # Build the Windows binary on the VM (cross-compilation is not set up

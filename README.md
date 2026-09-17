@@ -24,14 +24,14 @@ Scope:
    only run one installer.
 
 The `fs-ext4` library lives at [`../rust-fs-ext4/`](../rust-fs-ext4)
-(git submodule from [christhomas/rust-fs-ext4](https://github.com/christhomas/rust-fs-ext4))
-and is path-depended; this crate is the distribution unit.
+(a sibling checkout of [christhomas/rust-fs-ext4](https://github.com/christhomas/rust-fs-ext4),
+pinned in `chores.yml`) and is path-depended; this crate is the distribution unit.
 
 The Windows-driver scaffolding (SCM service, disk-arrival watcher,
 WinFsp.Launcher integration, partition-table walker, raw-device I/O,
 installer + CI templates) lives in
 [winfsp-fs-skeleton](https://github.com/antimatter-studios/winfsp-fs-skeleton),
-vendored at [`../winfsp-fs-skeleton/`](../winfsp-fs-skeleton).
+checked out as a sibling at [`../winfsp-fs-skeleton/`](../winfsp-fs-skeleton).
 ext4-win-driver is the **first consumer** of that skeleton -- it was
 extracted from this project once the auto-mount path was working
 end-to-end. See [The skeleton split](#the-skeleton-split) below for the
@@ -215,15 +215,15 @@ where the LocalSystem PATH doesn't reach the LLVM-MinGW runtime dir.
 - **WinFsp 2.1+** installed on the build/run machine
   ([winfsp.dev](https://winfsp.dev/) -> MSI, or `winget install WinFsp.WinFsp`).
 - A forked
-  [winfsp-rs](https://github.com/antimatter-studios/winfsp-rs) is a
-  git submodule at [`vendor/winfsp-rs/`](./vendor/winfsp-rs) on the
-  `gnullvm-support` branch (path-depended; the upstream PR is pending).
+  [winfsp-rs](https://github.com/antimatter-studios/winfsp-rs) is checked
+  out as a sibling at [`../winfsp-rs/`](../winfsp-rs), pinned to a commit
+  from the `gnullvm-support` branch (path-depended; the upstream PR is pending).
   The fork also requires:
   - `LLVM` for `libclang.dll` (`winget install LLVM.LLVM`)
   - LLVM-MinGW (`winget install MartinStorsjo.LLVM-MinGW.UCRT`)
 - `LIBCLANG_PATH=C:\Program Files\LLVM\bin` so bindgen can find `libclang.dll`.
 - [winfsp-fs-skeleton](https://github.com/antimatter-studios/winfsp-fs-skeleton)
-  is a git submodule at [`../winfsp-fs-skeleton/`](../winfsp-fs-skeleton);
+  is checked out as a sibling at [`../winfsp-fs-skeleton/`](../winfsp-fs-skeleton);
   pure Rust, no extra toolchain requirements.
 
 ### Building the installer
