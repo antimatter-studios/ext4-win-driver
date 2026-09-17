@@ -60,7 +60,7 @@ vars:
   WINFSP_RS_URL: https://github.com/antimatter-studios/winfsp-rs.git
   WINFSP_RS_REF: 59ab48bca2a67c95d4eba640343b6b80b87bb6ea
   HARNESS_URL: https://github.com/antimatter-studios/fs-windows-test-harness.git
-  HARNESS_REF: v3.11.0
+  HARNESS_REF: v4.0.0
 
 tasks:
   siblings:

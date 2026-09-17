@@ -243,7 +243,7 @@ Produces `dist\ext4-win-driver-<ver>-arm64.msi` and
 ## Testing
 
 Scenarios live in [`test-matrix.json`](./test-matrix.json) and the per-project
-adapter config in [`fs-test-harness.toml`](./fs-test-harness.toml). Both are
+adapter config in [`fs-windows-test-harness.toml`](./fs-windows-test-harness.toml). Both are
 consumed by the shared
 [`fs-windows-test-harness`](https://github.com/antimatter-studios/fs-windows-test-harness),
 checked out as a sibling repo at

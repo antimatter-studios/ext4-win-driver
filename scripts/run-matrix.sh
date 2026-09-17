@@ -342,7 +342,7 @@ ship_vm_scripts
 # ── smoke gate (only when running the full matrix) ────────────────────────────
 # Fast host-only sanity check before committing to a full run. Catches
 # wiring breakage (Alpine VM, SSH, image dir) in seconds. The smoke
-# group is defined in fs-test-harness.toml [groups].smoke. Gate is
+# group is defined in fs-windows-test-harness.toml [groups].smoke. Gate is
 # skipped when the user passes a scenario filter — they know what they
 # are targeting.
 if [[ "${#forwarded_args[@]}" -eq 0 ]]; then

@@ -1,6 +1,5 @@
-# fs-test-harness.toml — fs-windows-test-harness consumer config for
-# ext4-win-driver. (The filename keeps the old harness name: the pinned
-# harness release only looks for `fs-test-harness.toml`.)
+# fs-windows-test-harness.toml — fs-windows-test-harness consumer config
+# for ext4-win-driver.
 #
 # The harness scripts + Rust runner live at ../fs-windows-test-harness/,
 # a sibling checkout of
