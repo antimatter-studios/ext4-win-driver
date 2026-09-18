@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# scripts/run-matrix.sh — wrapper around the fs-test-harness matrix
+# scripts/run-matrix.sh — wrapper around the fs-windows-test-harness matrix
 # runner that cleans up disk images on exit (success, failure, Ctrl-C,
 # or any signal).
 #
 # Why a wrapper instead of fixing the harness directly:
-# * The harness lives in `../fs-test-harness/` (git submodule);
+# * The harness lives in `../fs-windows-test-harness/` (sibling checkout);
 #   we don't own its lifecycle. Cleanup belongs in consumer code.
 # * `init-image` (and ship-to-host) create .img files under HOST_IMAGE_DIR
 #   and have no opinion about who removes them. Without this trap the
@@ -19,7 +19,7 @@
 #   Stale locks (from killed processes) can be removed with:
 #     rm -rf /tmp/ext4-matrix-lock-*
 #
-# Usage: same as `../fs-test-harness/scripts/run-tests.sh`. All
+# Usage: same as `../fs-windows-test-harness/scripts/run-tests.sh`. All
 # arguments pass straight through. Examples:
 #
 #   bash scripts/run-matrix.sh                  # full matrix
@@ -149,7 +149,7 @@ stop_ssh_mux() {
 ship_vm_scripts() {
     # SCP harness vm-side scripts to the Windows VM so {vm.harness_root}/scripts/vm/
     # exists. Idempotent — runs every invocation since the files are small and
-    # the copy keeps the VM in sync with any harness submodule bumps.
+    # the copy keeps the VM in sync with any harness pin bumps.
     [[ ! -f "$repo_root/.test-env" ]] && return 0
     local vm_host ssh_key vm_workdir
     vm_host=$(grep '^VM_HOST=' "$repo_root/.test-env" 2>/dev/null | head -1 | cut -d= -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
@@ -160,7 +160,7 @@ ship_vm_scripts() {
     local key_opts=()
     [[ -n "$ssh_key" && -f "$ssh_key" ]] && key_opts=(-i "$ssh_key" -o IdentitiesOnly=yes)
 
-    local harness_dir="../fs-test-harness"
+    local harness_dir="../fs-windows-test-harness"
     local src="$repo_root/$harness_dir/scripts/vm"
     local dest="$vm_workdir/$harness_dir/scripts/vm"
     local ps_dest="${dest//\//\\}"
@@ -342,12 +342,12 @@ ship_vm_scripts
 # ── smoke gate (only when running the full matrix) ────────────────────────────
 # Fast host-only sanity check before committing to a full run. Catches
 # wiring breakage (Alpine VM, SSH, image dir) in seconds. The smoke
-# group is defined in fs-test-harness.toml [groups].smoke. Gate is
+# group is defined in fs-windows-test-harness.toml [groups].smoke. Gate is
 # skipped when the user passes a scenario filter — they know what they
 # are targeting.
 if [[ "${#forwarded_args[@]}" -eq 0 ]]; then
     echo "[run-matrix] === smoke gate (group: smoke) ===" >&2
-    if ! bash "$repo_root/../fs-test-harness/scripts/run-tests.sh" smoke; then
+    if ! bash "$repo_root/../fs-windows-test-harness/scripts/run-tests.sh" smoke; then
         echo "[run-matrix] smoke gate failed; aborting before full matrix run" >&2
         exit 1
     fi
@@ -355,4 +355,4 @@ if [[ "${#forwarded_args[@]}" -eq 0 ]]; then
 fi
 
 # Forward to the real runner.
-bash "$repo_root/../fs-test-harness/scripts/run-tests.sh" "${forwarded_args[@]+"${forwarded_args[@]}"}"
+bash "$repo_root/../fs-windows-test-harness/scripts/run-tests.sh" "${forwarded_args[@]+"${forwarded_args[@]}"}"

@@ -11,8 +11,8 @@ heavier options (Mac-side `fsck.ext4`, sidecar Linux container).
 
 ## What the harness already supports
 
-The shared `fs-test-harness` runner (see
-`../fs-test-harness/scripts/run-scenario.ps1`, stage E) already wires a
+The shared `fs-windows-test-harness` runner (see
+`../fs-windows-test-harness/scripts/run-scenario.ps1`, stage E) already wires a
 post-verify hook through the matrix. There is nothing to change in the
 harness — the consumer just has to populate two fields:
 
@@ -21,7 +21,7 @@ harness — the consumer just has to populate two fields:
 2. **Per-scenario `post_verify` block** — override or opt-in for a
    specific scenario.
 
-The schema (`../fs-test-harness/schemas/test-matrix.schema.json`)
+The schema (`../fs-windows-test-harness/schemas/test-matrix.schema.json`)
 defines:
 
 ```json

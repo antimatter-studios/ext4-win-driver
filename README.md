@@ -243,22 +243,31 @@ Produces `dist\ext4-win-driver-<ver>-arm64.msi` and
 ## Testing
 
 Scenarios live in [`test-matrix.json`](./test-matrix.json) and the per-project
-adapter config in [`harness.toml`](./harness.toml). Both are consumed by the
-shared [`fs-test-harness`](https://github.com/antimatter-studios/fs-test-harness),
-vendored as a git submodule at [`../fs-test-harness/`](../fs-test-harness).
+adapter config in [`fs-windows-test-harness.toml`](./fs-windows-test-harness.toml). Both are
+consumed by the shared
+[`fs-windows-test-harness`](https://github.com/antimatter-studios/fs-windows-test-harness),
+checked out as a sibling repo at
+[`../fs-windows-test-harness/`](../fs-windows-test-harness) -- not a submodule.
+Its URL and pinned tag (`HARNESS_URL` / `HARNESS_REF`) live in
+[`chores.yml`](./chores.yml), next to the other family pins.
 
-After cloning, initialise the submodules:
+After cloning, check out the siblings at their pinned refs:
 
 ```sh
-git submodule update --init --recursive
+chore siblings          # clone or move each sibling to its pin; refuses to touch a dirty one
+chore siblings:check    # report where each sibling is, changing nothing
 ```
+
+CI does not run `chore` (there is no Windows build of it); the workflows read
+the same `*_URL` / `*_REF` values out of `chores.yml` and clone the siblings
+directly.
 
 Run the test matrix (Mac -> SSH -> Windows VM -> diag pull):
 
 ```sh
-bash ../fs-test-harness/scripts/run-tests.sh                 # full matrix
-bash ../fs-test-harness/scripts/run-tests.sh basic-ro-list   # one scenario
-bash ../fs-test-harness/scripts/run-tests.sh --help          # all flags
+bash ../fs-windows-test-harness/scripts/run-tests.sh                 # full matrix
+bash ../fs-windows-test-harness/scripts/run-tests.sh basic-ro-list   # one scenario
+bash ../fs-windows-test-harness/scripts/run-tests.sh --help          # all flags
 ```
 
 On the very first run, the script prompts for VM details (user, IP,
@@ -267,17 +276,14 @@ skip straight to ship + run + diag-pull. Use `--reset` to wipe
 `.test-env` and re-prompt (e.g. after VM IP change).
 
 Diagnostics land under `test-diagnostics/run-<UTC>/`. See the harness's
-[`docs/triage-protocol.md`](../fs-test-harness/docs/triage-protocol.md)
+[`docs/triage-protocol.md`](../fs-windows-test-harness/docs/triage-protocol.md)
 for how to read a failure, and
-[`docs/multi-agent-protocol.md`](../fs-test-harness/docs/multi-agent-protocol.md)
+[`docs/multi-agent-protocol.md`](../fs-windows-test-harness/docs/multi-agent-protocol.md)
 for running multiple agents against the same matrix.
 
-To update a vendored submodule when its upstream releases:
-
-```sh
-git submodule update --remote --merge ../fs-test-harness
-git add ../fs-test-harness && git commit -m "chore: bump fs-test-harness submodule"
-```
+To move to a new harness release, edit `HARNESS_REF` in `chores.yml` to the
+new tag, then re-run `chore siblings` to check it out locally. That one line
+is the whole bump: CI picks the new ref up from the same file.
 
 ## License
 
