@@ -1,0 +1,16 @@
+# .github-guard — declarations github-guard reads (see the github-guard skill:
+# https://github.com/antimatter-studios/agent-skills/blob/main/.claude/skills/github-guard/README.md).
+# git-config format: check with `git config -f .github-guard --list`, and
+# double-quote any value containing # or ;.
+
+# What must pass before main takes a merge. Read from the default branch on
+# the server, never from a checkout, so a branch cannot change its own gate.
+#
+# These are the three check runs .github/workflows/ci.yml produces on a pull
+# request. Declared rather than left to discovery so the gate is reviewed here
+# instead of guessed from recent runs: a job added, renamed or split has to be
+# added to this list too, or it will not gate a merge.
+[checks]
+	required = check (ubuntu-latest, no Windows features)
+	required = check (macos-latest, no Windows features)
+	required = check (windows, mount + service)
