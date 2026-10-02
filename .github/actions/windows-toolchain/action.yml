@@ -118,3 +118,4 @@ runs:
           $content = Get-Content $f -Raw
           Set-Content -Path $f -Value ($content -replace [regex]::Escape($needle), $replacement) -NoNewline
           "Patched $f"
+        }
