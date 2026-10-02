@@ -39,12 +39,14 @@ shift
 #   tier           measured (lines / bytes)                       budget
 #   check          MEASURE                                        MEASURE
 #   check-windows  MEASURE                                        MEASURE
+#   build-windows  MEASURE                                        MEASURE
 #   clippy         MEASURE                                        MEASURE
 #   test           MEASURE                                        MEASURE
 #   matrix         MEASURE                                        MEASURE
 case "$TIER" in
     check)         MAX_LINES=1000; MAX_BYTES=100000 ;;
     check-windows) MAX_LINES=1000; MAX_BYTES=100000 ;;
+    build-windows) MAX_LINES=1000; MAX_BYTES=100000 ;;
     clippy)        MAX_LINES=1000; MAX_BYTES=100000 ;;
     test)          MAX_LINES=1000; MAX_BYTES=100000 ;;
     matrix)        MAX_LINES=5000; MAX_BYTES=500000 ;;
