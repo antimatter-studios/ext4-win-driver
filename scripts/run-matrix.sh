@@ -290,8 +290,16 @@ pre_run_subdirs=$(find "$host_image_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/
 export EXT4_REAL_SSH
 EXT4_REAL_SSH=$(command -v ssh)
 
-# Start the ext4 builder VM so recipes can create images on demand.
-start_builder_vm
+# Start the ext4 builder VM so recipes can create images on demand -- unless
+# the images were already built on a Linux host (CI's `ext4 images` job) and
+# EXT4_PREBUILT_IMAGES names them. scripts/build-ext4-image.sh then copies one
+# per scenario and refuses a type it has no image for; there is nothing for a
+# VM to do, and a Windows runner could not start one.
+if [[ -n "${EXT4_PREBUILT_IMAGES:-}" ]]; then
+    echo "[run-matrix] builder VM: not started; images come from EXT4_PREBUILT_IMAGES=$EXT4_PREBUILT_IMAGES" >&2
+else
+    start_builder_vm
+fi
 
 # Start SSH connection mux before handing off to the harness.
 # The harness opens many separate SSH sessions per scenario; multiplexing

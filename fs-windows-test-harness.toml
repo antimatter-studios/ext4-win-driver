@@ -115,13 +115,15 @@ info  = "{binary} info  {image}"
 # by run-matrix.sh so the runner expands them from .test-env.
 
 [ops.build-ext4-image]
-# SSH into the Alpine builder VM and invoke _vm-builder.sh for this
-# scenario's image type. The image is written to /host/{run_id}/ inside
-# the VM, which maps to {image_dir}/{run_id}/ on the host via 9p share.
-# Uses scripts/builder-ssh.sh (not raw ssh) so it never goes through the
-# Windows VM SSH mux.
+# One fresh image of this scenario's type in {image_dir}/{run_id}/, from
+# rust-fs-ext4's _vm-builder.sh. scripts/build-ext4-image.sh runs it in the
+# Alpine builder VM -- written to /host/{run_id}/ inside the VM, which maps
+# to {image_dir}/{run_id}/ over the 9p share, through scripts/builder-ssh.sh
+# so it never goes through the Windows VM SSH mux -- or, with
+# EXT4_PREBUILT_IMAGES set (CI), copies the image that script already built
+# on a Linux runner.
 host = "host"
-command = "bash scripts/builder-ssh.sh \"mkdir -p /host/{run_id} && sh /host/_vm-builder.sh /host/{run_id} {scenario.volume_params.image_type}\""
+command = "bash scripts/build-ext4-image.sh {run_id} {scenario.volume_params.image_type}"
 expect_exit = 0
 
 # ── Host-side verifiers ──────────────────────────────────────────────────────

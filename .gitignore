@@ -8,4 +8,6 @@ test-diagnostics/
 .claude/
 .history/
 # Default HOST_IMAGE_DIR for scripts/run-matrix.sh: run output, never source.
-diskimages/
+/diskimages/
+/tmp/
+/ext4-images/
