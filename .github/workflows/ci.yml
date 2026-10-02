@@ -33,6 +33,13 @@ on:
     - cron: '17 4 * * 1'
   workflow_dispatch:
 
+# A newer push to a pull request cancels its older run: the matrix job holds
+# a Windows runner for most of an hour, and a superseded run's answer is
+# about a commit nobody will merge. Runs on main are never cancelled.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
 
