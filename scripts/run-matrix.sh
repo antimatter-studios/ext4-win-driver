@@ -146,41 +146,6 @@ stop_ssh_mux() {
     [[ -n "${ssh_wrapper_dir:-}" ]] && rm -rf "$ssh_wrapper_dir"
 }
 
-ship_vm_scripts() {
-    # SCP harness vm-side scripts to the Windows VM so {vm.harness_root}/scripts/vm/
-    # exists. Idempotent — runs every invocation since the files are small and
-    # the copy keeps the VM in sync with any harness pin bumps.
-    [[ ! -f "$repo_root/.test-env" ]] && return 0
-    local vm_host ssh_key vm_workdir
-    vm_host=$(grep '^VM_HOST=' "$repo_root/.test-env" 2>/dev/null | head -1 | cut -d= -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    ssh_key=$(grep '^SSH_KEY=' "$repo_root/.test-env" 2>/dev/null | head -1 | cut -d= -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    vm_workdir=$(grep '^VM_WORKDIR=' "$repo_root/.test-env" 2>/dev/null | head -1 | cut -d= -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    [[ -z "$vm_host" || -z "$vm_workdir" ]] && return 0
-
-    local key_opts=()
-    [[ -n "$ssh_key" && -f "$ssh_key" ]] && key_opts=(-i "$ssh_key" -o IdentitiesOnly=yes)
-
-    local harness_dir="../fs-windows-test-harness"
-    local src="$repo_root/$harness_dir/scripts/vm"
-    local dest="$vm_workdir/$harness_dir/scripts/vm"
-    local ps_dest="${dest//\//\\}"
-
-    ssh "${key_opts[@]+"${key_opts[@]}"}" \
-        -o BatchMode=yes \
-        -o ConnectTimeout=10 \
-        "$vm_host" \
-        "powershell -NoProfile -NonInteractive -Command \"New-Item -ItemType Directory -Path '$ps_dest' -Force | Out-Null\"" >&2 \
-        || { echo "[run-matrix] WARNING: could not create VM script dir; vm-side ops may fail" >&2; return 0; }
-
-    scp "${key_opts[@]+"${key_opts[@]}"}" \
-        -o BatchMode=yes \
-        -o ConnectTimeout=10 \
-        -r "$src/." "$vm_host:$dest/" >&2 \
-        || { echo "[run-matrix] WARNING: could not ship vm scripts; vm-side ops may fail" >&2; return 0; }
-
-    echo "[run-matrix] harness vm scripts → $vm_host:$dest" >&2
-}
-
 ensure_vm_workdir() {
     # Read VM_HOST, SSH_KEY, VM_WORKDIR from .test-env (same source as harness).
     [[ ! -f "$repo_root/.test-env" ]] && return 0
@@ -335,9 +300,11 @@ start_ssh_mux
 # skipped if VM_HOST or VM_WORKDIR is not configured in .test-env.
 ensure_vm_workdir
 
-# Ship the harness vm-side scripts (win-write.ps1, _lib.ps1, etc.) to the
-# Windows VM so {vm.harness_root}/scripts/vm/ resolves correctly.
-ship_vm_scripts
+# The harness's scripts/vm/ reach the VM through run-tests.sh's own ship
+# phase, not from here. This script used to scp them itself, before the
+# harness shipped them (v4.0.0); from v4.2.0 run-tests.sh does it under the
+# VM workdir lock, and a copy made from here, outside that lock, is exactly
+# the unfenced write into VM_WORKDIR the lock exists to rule out.
 
 # ── smoke gate (only when running the full matrix) ────────────────────────────
 # Fast host-only sanity check before committing to a full run. Catches
