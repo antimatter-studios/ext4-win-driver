@@ -280,6 +280,13 @@ jobs:
           New-ItemProperty -Path HKLM:\SOFTWARE\OpenSSH -Name DefaultShell `
             -Value "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
             -PropertyType String -Force | Out-Null
+          # An SSH session gets the machine environment sshd started with,
+          # not this job's. Put WinFsp's bin directory on the machine PATH
+          # before the restart, so the driver's delay-loaded winfsp DLL
+          # resolves in the sessions the matrix's mount steps run in.
+          $winfspBin = Join-Path ${env:ProgramFiles(x86)} 'WinFsp\bin'
+          $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          [Environment]::SetEnvironmentVariable('Path', "$machinePath;$winfspBin", 'Machine')
           Restart-Service sshd
 
       - name: build the driver (mount) where the ops look for it
@@ -305,6 +312,12 @@ jobs:
       - name: the matrix, quietly, under its budget
         env:
           EXT4_PREBUILT_IMAGES: ${{ github.workspace }}/ext4-images
+          # Git Bash rewrites any argument that looks like a POSIX path when
+          # it starts a native program, so the in-image path `/` reached
+          # ext4.exe as `C:/Program Files/Git/`. Every path the matrix hands
+          # ext4.exe is either inside the image or already a Windows path,
+          # so no argument is converted.
+          MSYS2_ARG_CONV_EXCL: '*'
         run: |
           set -euo pipefail
           export EXT4_PREBUILT_IMAGES="$(cygpath -u "$EXT4_PREBUILT_IMAGES")"
