@@ -1,0 +1,120 @@
+# The toolchain the WinFsp half of the driver needs on a GitHub Windows
+# runner: Rust with the x86_64 gnullvm target, LLVM-MinGW, libclang for
+# bindgen, WinFsp's headers and libraries, and the fsctl.h patch.
+#
+# ONE COPY FOR BOTH CI JOBS THAT BUILD IT -- `check (windows, mount +
+# service)` and the matrix job. The matrix job is the second job to need
+# this, and a second pasted copy of five steps is how the two would drift
+# apart. release.yml keeps its own copy for now because it also builds the
+# aarch64 target; its fsctl.h patch must stay identical to the one here.
+#
+# It starts by checking out the siblings at their chores.yml pins, because
+# the header patch reaches into ../winfsp-rs and cargo needs every path
+# dependency. Run it right after actions/checkout.
+name: windows-toolchain
+description: Siblings at their pins, then Rust (x86_64 gnullvm), LLVM-MinGW, libclang, WinFsp and the fsctl.h patch
+
+inputs:
+  llvm-mingw-version:
+    description: LLVM-MinGW release tag (kept in step with release.yml's LLVM_MINGW_VER)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: check out sibling repos
+      # chore publishes darwin and linux builds only, and `uname -s`
+      # under Git Bash reports MINGW64_NT-*, so there is nothing to
+      # install here. Cloning directly restates what `chore siblings`
+      # does — which is the duplication chores.yml exists to remove —
+      # so it reads the refs OUT OF chores.yml rather than hardcoding
+      # them, and the single declaration still holds.
+      shell: bash
+      run: |
+        set -euo pipefail
+        pin() { sed -n "s/^  $1: *//p" chores.yml | tr -d '\r'; }
+        # URL as well as ref. The family is not all in one org --
+        # rust-fs-ext4 lives under christhomas/ while its siblings are
+        # under antimatter-studios/ -- so reconstructing a URL from
+        # the repo name silently points at a repo that does not exist.
+        # git then prompts for credentials, and the run dies with
+        # "could not read Username", which reads as an auth problem
+        # rather than a wrong URL.
+        printf '%s\t%s\t%s\n' \
+          rust-fs-core       "$(pin FS_CORE_URL)" "$(pin FS_CORE_REF)" \
+          rust-fs-ext4       "$(pin FS_EXT4_URL)" "$(pin FS_EXT4_REF)" \
+          winfsp-fs-skeleton "$(pin SKELETON_URL)" "$(pin SKELETON_REF)" \
+          fs-windows-test-harness "$(pin HARNESS_URL)" "$(pin HARNESS_REF)" \
+          winfsp-rs          "$(pin WINFSP_RS_URL)" "$(pin WINFSP_RS_REF)" \
+        | while IFS="$(printf '\t')" read -r name url ref; do
+            echo "cloning $name at $ref"
+            # init + fetch-by-ref, not clone. winfsp-rs is pinned to a
+            # bare commit that no published branch contains, so a
+            # plain clone does not have it and `--branch` cannot name
+            # it. Asking the server for the SHA directly does work.
+            git init --quiet "../$name"
+            git -C "../$name" remote add origin "$url"
+            git -C "../$name" fetch --quiet --depth 1 origin "$ref"
+            git -C "../$name" checkout --quiet FETCH_HEAD
+          done
+
+    - name: install Rust + gnullvm target
+      shell: pwsh
+      run: |
+        rustup install stable
+        rustup default stable
+        rustup target add x86_64-pc-windows-gnullvm
+        rustc --version
+
+    - name: install LLVM-MinGW (gnullvm toolchain)
+      shell: pwsh
+      run: |
+        # Provides the gnullvm runtime + sysroot. Its standalone
+        # release zip does NOT ship libclang.dll, so libclang for
+        # bindgen comes from the separate step below.
+        $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/${{ inputs.llvm-mingw-version }}/llvm-mingw-${{ inputs.llvm-mingw-version }}-ucrt-x86_64.zip"
+        $zip = "$env:RUNNER_TEMP\llvm-mingw.zip"
+        Invoke-WebRequest -Uri $url -OutFile $zip
+        Expand-Archive -Path $zip -DestinationPath "$env:RUNNER_TEMP\llvm-mingw" -Force
+        $extracted = Get-ChildItem "$env:RUNNER_TEMP\llvm-mingw" -Directory | Select-Object -First 1
+        Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $extracted.FullName 'bin')
+
+    - name: install LLVM (libclang for bindgen)
+      uses: KyleMayes/install-llvm-action@v2
+      with:
+        # Pinned to 18.1 for the same reason release.yml pins it: old
+        # enough to parse LLVM-MinGW's clang-22 sysroot headers
+        # without the AVX-512 self-compile errors a same-version
+        # libclang trips on.
+        version: '18.1'
+        directory: ${{ runner.temp }}/llvm
+
+    - name: install WinFsp (build-time headers + libs)
+      shell: pwsh
+      run: choco install winfsp --yes --no-progress
+
+    - name: patch fsctl.h for the _ReadWriteBarrier collision
+      shell: pwsh
+      run: |
+        # clang's MSVC compatibility predefines _ReadWriteBarrier as a
+        # 0-arg function-like macro via intrin.h. WinFsp's fsctl.h then
+        # forward-declares `void _ReadWriteBarrier(void);`, which the
+        # preprocessor mangles into `void ;`. `-U_ReadWriteBarrier`
+        # does not help, because intrin.h is included after it.
+        #
+        # Wrap the forward-decl in push_macro / undef / pop_macro so
+        # the macro is hidden at exactly the point the function has to
+        # be declared. Both the vendored header and the choco-installed
+        # one are patched, since which is read depends on winfsp-sys's
+        # `system` feature. Kept identical to release.yml: if these two
+        # ever disagree, CI stops predicting the release.
+        $needle = '    void _ReadWriteBarrier(void);'
+        $replacement = "#pragma push_macro(`"_ReadWriteBarrier`")`n#undef _ReadWriteBarrier`n    void _ReadWriteBarrier(void);`n#pragma pop_macro(`"_ReadWriteBarrier`")"
+        foreach ($f in @(
+          '../winfsp-rs/winfsp-sys/winfsp/inc/winfsp/fsctl.h',
+          'C:\Program Files (x86)\WinFsp\inc\winfsp\fsctl.h'
+        )) {
+          if (-not (Test-Path $f)) { "Skipping (not found): $f"; continue }
+          $content = Get-Content $f -Raw
+          Set-Content -Path $f -Value ($content -replace [regex]::Escape($needle), $replacement) -NoNewline
+          "Patched $f"

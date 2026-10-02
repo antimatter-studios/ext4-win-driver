@@ -7,3 +7,6 @@ test-diagnostics/
 *.img
 .claude/
 .history/
+/tmp/
+/diskimages/
+/ext4-images/
