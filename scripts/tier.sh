@@ -36,20 +36,42 @@ shift
 # flag that turns on per-step output) does not. Raise one deliberately, with
 # the measurement that justifies it, in the same edit.
 #
-#   tier           measured (lines / bytes)                       budget
-#   check          MEASURE                                        MEASURE
-#   check-windows  MEASURE                                        MEASURE
-#   build-windows  MEASURE                                        MEASURE
-#   clippy         MEASURE                                        MEASURE
-#   test           MEASURE                                        MEASURE
-#   matrix         MEASURE                                        MEASURE
+#   tier           measured (lines / bytes)                         budget
+#   check          36 / 1,828 cold, 5 / 480 warm (CI ubuntu)        48 / 2,450
+#   check-windows  239 / 12,643 cold, 157 / 9,000 warm (CI)         320 / 16,900
+#   build-windows  229 / 12,138 cold (CI windows-latest)            305 / 16,200
+#   clippy         2 / 187 (CI ubuntu and macos, cold and warm)     3 / 250
+#   test           44 / 2,291 cold, 22 / 1,333 warm (CI ubuntu)     59 / 3,050
+#   matrix         910 / 40,147 on a RED run (see below)            1,220 / 53,600
+#
+# Measured on GitHub's runners from the verdict lines of runs 37071187610,
+# 37071802059 and 37074571843 (2026-10-02). The cold figures are the first
+# run after Cargo.lock changed: a line per crate compiled, plus, on Windows,
+# the driver's own warnings.
+#
+# CLIPPY RUNS AFTER CHECK in the same job, so it prints only its own crate's
+# line and cargo's `Finished`: two lines cold or warm. A third of two is not
+# a line, so the budget is the measurement plus one line; any warning fails
+# the step under -D warnings anyway.
+#
+# THE MATRIX ROW IS PROVISIONAL, and the only one not measured on a passing
+# run. The first CI run of test-matrix.json (run 37074571843, 35 scenarios
+# dispatched in 71 s) failed 34 of them for reasons of the CI shape -- the
+# fixes are in this change -- and printed 910 lines / 40,147 bytes, every
+# failure carrying its step's stderr. A green run prints less than a red one,
+# so a budget a third above the red run fits a green run with room, and it
+# still catches a run that starts printing per step. Replace it with a green
+# run's measurement plus a third once the matrix passes. It is also the only
+# tier whose length depends on a machine (the VM, its SSH banner, its mount
+# timing) rather than on this repository, so it is the one most likely to
+# need raising -- with a measurement.
 case "$TIER" in
-    check)         MAX_LINES=1000; MAX_BYTES=100000 ;;
-    check-windows) MAX_LINES=1000; MAX_BYTES=100000 ;;
-    build-windows) MAX_LINES=1000; MAX_BYTES=100000 ;;
-    clippy)        MAX_LINES=1000; MAX_BYTES=100000 ;;
-    test)          MAX_LINES=1000; MAX_BYTES=100000 ;;
-    matrix)        MAX_LINES=5000; MAX_BYTES=500000 ;;
+    check)         MAX_LINES=48;   MAX_BYTES=2450 ;;
+    check-windows) MAX_LINES=320;  MAX_BYTES=16900 ;;
+    build-windows) MAX_LINES=305;  MAX_BYTES=16200 ;;
+    clippy)        MAX_LINES=3;    MAX_BYTES=250 ;;
+    test)          MAX_LINES=59;   MAX_BYTES=3050 ;;
+    matrix)        MAX_LINES=1220; MAX_BYTES=53600 ;;
     *)
         echo "tier.sh: '$TIER' has no budget. Add a measured row to scripts/tier.sh." >&2
         exit 2
