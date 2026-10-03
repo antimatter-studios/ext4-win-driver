@@ -75,10 +75,11 @@ s = m['scenarios'].get(scenario)
 if not s:
     print(f\"ERROR: scenario '{scenario}' not found in test-matrix.json\", file=sys.stderr)
     sys.exit(1)
-if not s.get('image_type') or not s.get('image'):
-    print(f\"ERROR: scenario '{scenario}' has no image_type/image (marker scenario?)\", file=sys.stderr)
+image_type = (s.get('volume_params') or {}).get('image_type')
+if not image_type or not s.get('image'):
+    print(f\"ERROR: scenario '{scenario}' has no volume_params.image_type/image (marker scenario?)\", file=sys.stderr)
     sys.exit(1)
-print(s['image_type'], s['image'])
+print(image_type, s['image'])
 ") || exit 1
 read -r image_type image_file <<< "$result"
 
