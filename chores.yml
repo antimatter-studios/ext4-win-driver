@@ -50,8 +50,11 @@ vars:
   # swapping a floating submodule for a floating sibling would have
   # fixed nothing. Bump this when the skeleton next releases -- its
   # `translate` and `reader` modules are what this driver will move to.
+  # v0.2.2: logical partitions inside an MBR extended partition are
+  # listed (#11), and disks already attached when the service or the
+  # watcher starts are mounted without a replug (#23).
   SKELETON_URL: https://github.com/antimatter-studios/winfsp-fs-skeleton.git
-  SKELETON_REF: v0.2.1
+  SKELETON_REF: v0.2.2
   # Pinned to a COMMIT, not a branch. This is a fork of a third-party
   # crate, so there is no release cadence of ours to track, and upstream
   # 0.13.0 does not compile for *-pc-windows-gnullvm -- it declares the
