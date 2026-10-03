@@ -121,7 +121,7 @@ info  = "{binary} info  {image}"
 # Uses scripts/builder-ssh.sh (not raw ssh) so it never goes through the
 # Windows VM SSH mux.
 host = "host"
-command = "bash scripts/builder-ssh.sh \"mkdir -p /host/{run_id} && sh /host/_vm-builder.sh /host/{run_id} {scenario.image_type}\""
+command = "bash scripts/builder-ssh.sh \"mkdir -p /host/{run_id} && sh /host/_vm-builder.sh /host/{run_id} {scenario.volume_params.image_type}\""
 expect_exit = 0
 
 # ── Host-side verifiers ──────────────────────────────────────────────────────

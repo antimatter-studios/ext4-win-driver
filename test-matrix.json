@@ -1,6 +1,6 @@
 {
   "_format": "v2",
-  "_doc": "ext4-win-driver matrix work list. See docs/test-harness.md. Each scenario name is unique. status starts at 'pending'; agents transition via scripts/claim-scenario.sh. Schema per scenario: image (file under EXT4_TEST_DISKS), mount_args (extra argv after `mount <image> --drive X:`), operations[] (typed verb list, see run-scenario.ps1), post_verify (optional 'fsck-ext4-strict' hook). Hashes captured from ext4 CLI on macOS against the canonical test images at /Volumes/sdcard256gb/projects/rust-fs-ext4/test-disks/.",
+  "_doc": "ext4-win-driver matrix work list. See docs/test-harness.md. Each scenario name is unique. status starts at 'pending'; agents transition via scripts/claim-scenario.sh. Schema per scenario: image (file under EXT4_TEST_DISKS), volume_params.image_type (the _vm-builder.sh image type the build-ext4-image op builds), operations[] (typed verb list, see run-scenario.ps1), post_verify (optional 'fsck-ext4-strict' hook). Hashes captured from ext4 CLI on macOS against the canonical test images at /Volumes/sdcard256gb/projects/rust-fs-ext4/test-disks/.",
   "scenarios": {
     "basic-ro-list": {
       "status": "pending",
@@ -22,7 +22,9 @@
           "expect_args": "'--expect-name' '.' '--expect-name' '..' '--expect-name' 'nested.txt'"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "basic-ro-cat": {
       "status": "pending",
@@ -49,7 +51,9 @@
           "expect_args": "'--expect-size' '7' '--expect-sha256' '370a8c04b8a65bb4494275eec227f1b694db04c76da6b0b8ae88ed1ab19790a3'"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "basic-rw-write-readback": {
       "status": "pending",
@@ -86,7 +90,9 @@
           "extra": "__none__"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "basic-rw-mkdir-touch": {
       "status": "pending",
@@ -141,7 +147,9 @@
           "extra": "__none__"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "htree-listing": {
       "status": "pending",
@@ -163,7 +171,9 @@
           "expect_args": "'--expect-count' '258'"
         }
       ],
-      "image_type": "htree"
+      "volume_params": {
+        "image_type": "htree"
+      }
     },
     "deep-extents-cat": {
       "status": "pending",
@@ -190,7 +200,9 @@
           "expect_args": "'--expect-size' '13' '--expect-sha256' '48b29839ecd2a7f7da1326b867961ca050e46fa4035a5f1c7eee28b401646650'"
         }
       ],
-      "image_type": "deep_extents"
+      "volume_params": {
+        "image_type": "deep_extents"
+      }
     },
     "inline-data-cat": {
       "status": "pending",
@@ -212,7 +224,9 @@
           "expect_args": "'--expect-size' '12' '--expect-sha256' '4fa141db5636666c4ba3402bcb80367f847a92174fce57f2b92e912af4411566'"
         }
       ],
-      "image_type": "inline"
+      "volume_params": {
+        "image_type": "inline"
+      }
     },
     "xattr-getxattr": {
       "status": "pending",
@@ -241,7 +255,9 @@
           "expect_args": "'--expect-size' '9' '--expect-sha256' '9b16b44d0e0a5cac4f968befb0b5b5eba913f9ef3dfa1501ed728b6ead72a357'"
         }
       ],
-      "image_type": "xattr"
+      "volume_params": {
+        "image_type": "xattr"
+      }
     },
     "whole-disk-with-part": {
       "status": "pending",
@@ -258,7 +274,9 @@
           "expect_args": "'--expect-name' '.' '--expect-name' '..' '--expect-name' 'link.txt' '--expect-name' 'lost+found' '--expect-name' 'subdir' '--expect-name' 'test.txt' -- '--part' '1'"
         }
       ],
-      "image_type": "whole_disk"
+      "volume_params": {
+        "image_type": "whole_disk"
+      }
     },
     "basic-stat-test-txt": {
       "status": "pending",
@@ -285,7 +303,9 @@
           "expect_args": "'--expect-stdout-contains' 'type:        RegFile'"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "basic-stat-symlink": {
       "status": "pending",
@@ -312,7 +332,9 @@
           "expect_args": "'--expect-size' '16' '--expect-sha256' '8ce9a8091ad255e6be4b7e9a48f324aea35eb6d9e552628cc139598d97779dee'"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "basic-tree-hash": {
       "status": "pending",
@@ -328,7 +350,9 @@
           "expect_args": "'--expect-stdout-sha256' '7d47e62f6c644ddae5f0aa02297f4e6aa8368c03889c300a53ffa3459d00aed9'"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "basic-info-volume": {
       "status": "pending",
@@ -352,7 +376,9 @@
           "expect_args": "'--expect-stdout-contains' 'label:          \"testvolume\"'"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "basic-parts-no-table": {
       "status": "pending",
@@ -368,7 +394,9 @@
           "expect_args": ""
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "htree-listing-hash": {
       "status": "pending",
@@ -385,7 +413,9 @@
           "expect_args": "'--expect-count' '258'"
         }
       ],
-      "image_type": "htree"
+      "volume_params": {
+        "image_type": "htree"
+      }
     },
     "deep-extents-stat": {
       "status": "pending",
@@ -407,7 +437,9 @@
           "expect_args": "'--expect-stdout-contains' 'type:        RegFile'"
         }
       ],
-      "image_type": "deep_extents"
+      "volume_params": {
+        "image_type": "deep_extents"
+      }
     },
     "inline-data-stat": {
       "status": "pending",
@@ -429,7 +461,9 @@
           "expect_args": "'--expect-stdout-contains' 'size:        100'"
         }
       ],
-      "image_type": "inline"
+      "volume_params": {
+        "image_type": "inline"
+      }
     },
     "xattr-cat-content": {
       "status": "pending",
@@ -446,7 +480,9 @@
           "expect_args": "'--expect-stdout-sha256' '211681a64dfd209d01a997a527c1706d50945fa2559c1caa289dbb2c1517ebe1'"
         }
       ],
-      "image_type": "xattr"
+      "volume_params": {
+        "image_type": "xattr"
+      }
     },
     "whole-disk-parts": {
       "status": "pending",
@@ -466,7 +502,9 @@
           "expect_args": "'--expect-stdout-contains' '2048'"
         }
       ],
-      "image_type": "whole_disk"
+      "volume_params": {
+        "image_type": "whole_disk"
+      }
     },
     "rw-rename": {
       "status": "pending",
@@ -512,7 +550,9 @@
           "extra": "__none__"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "rw-mkdir-rmdir": {
       "status": "pending",
@@ -562,7 +602,9 @@
           "extra": "__none__"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "rw-overwrite": {
       "status": "pending",
@@ -599,7 +641,9 @@
           "extra": "__none__"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "rw-unlink": {
       "status": "pending",
@@ -643,7 +687,9 @@
           "extra": "__none__"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "rw-write-then-readback-via-cli": {
       "status": "pending",
@@ -680,7 +726,9 @@
           "extra": "__none__"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "rw-write-in-subdir": {
       "status": "pending",
@@ -717,7 +765,9 @@
           "extra": "__none__"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "rw-mkdir-in-subdir": {
       "status": "pending",
@@ -770,7 +820,9 @@
           "extra": "__none__"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "rw-rename-dir": {
       "status": "pending",
@@ -814,7 +866,9 @@
           "extra": "__none__"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "ro-symlink-read-via-mount": {
       "status": "pending",
@@ -842,7 +896,9 @@
           "extra": "__none__"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "basic-readlink": {
       "status": "pending",
@@ -859,7 +915,9 @@
           "expect_args": "'--expect-target' 'test.txt'"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "rw-overwrite-durability": {
       "status": "pending",
@@ -895,7 +953,9 @@
           "expect_args": "'--expect-size' '9' '--expect-sha256' '3426c0c5bc8403ffdec320ad65b6f25b75fc3e3dcf924fac7e00bc8ddc2b995c'"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "win-htree-listing": {
       "status": "pending",
@@ -922,7 +982,9 @@
           "extra": "__none__"
         }
       ],
-      "image_type": "htree"
+      "volume_params": {
+        "image_type": "htree"
+      }
     },
     "win-inline-data-cat": {
       "status": "pending",
@@ -950,7 +1012,9 @@
           "extra": "__none__"
         }
       ],
-      "image_type": "inline"
+      "volume_params": {
+        "image_type": "inline"
+      }
     },
     "win-deep-extents-cat": {
       "status": "pending",
@@ -978,7 +1042,9 @@
           "extra": "__none__"
         }
       ],
-      "image_type": "deep_extents"
+      "volume_params": {
+        "image_type": "deep_extents"
+      }
     },
     "rw-write-durability": {
       "status": "pending",
@@ -1014,19 +1080,19 @@
           "expect_args": "'--expect-size' '16' '--expect-sha256' '4985f28f3992e8bd290be1366f5448eec7d8c68eec99063d7ac00e93d954f078'"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     },
     "watch-volume-arrival-marker": {
       "status": "blocked-needs-event-injection-harness",
       "image": "",
-      "mount_args": [],
       "_attempts": [],
       "_notes": "Placeholder for `ext4 watch` coverage. The watch subcommand reacts to Windows volume-arrival WMI events; the matrix model has no way to inject one. Unblock requires either (a) a helper that uses VHD attach/detach to synthesize real arrival events on the test VM, or (b) refactoring watch.rs to expose its event handler as a callable function the harness can drive directly. Until then, manual smoke-testing on the VM is the only path."
     },
     "installer-msi-marker": {
       "status": "blocked-needs-msi-test-runner",
       "image": "",
-      "mount_args": [],
       "_attempts": [],
       "_notes": "Placeholder for installer/Bundle.wxs coverage. MSI install + uninstall + right-click verb registration is Windows-only and mutates global state (Program Files, registry, ProgIDs). Unblock requires a sandboxed Windows VM snapshot the harness can revert between runs. Out of scope for the current foreground-mount-driven matrix."
     },
@@ -1069,7 +1135,9 @@
           "extra": "__none__"
         }
       ],
-      "image_type": "basic"
+      "volume_params": {
+        "image_type": "basic"
+      }
     }
   }
 }
