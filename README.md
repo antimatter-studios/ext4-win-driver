@@ -105,7 +105,7 @@ ext4 info   <image>                        # volume label, sizes, features
 ext4 ls     <image> [path]                 # directory listing
 ext4 stat   <image> <path>
 ext4 cat    <image> <path>
-ext4 tree   <image>
+ext4 tree   <image> [--canonical]            # --canonical: no inode numbers, sorted
 ext4 parts  <image>                        # MBR/GPT partition table
 ext4 audit  <image>                        # link-count + dirent integrity scan
 ext4 ls     <whole-disk.img> --part 1 /    # browse partition 1

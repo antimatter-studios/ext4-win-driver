@@ -467,13 +467,25 @@ pub fn cat(mt: &MountArgs, path: &str, offset: u64, length: Option<u64>) -> Resu
 // tree
 // ---------------------------------------------------------------------------
 
-pub fn tree(mt: &MountArgs, max_depth: u32) -> Result<()> {
+pub fn tree(mt: &MountArgs, max_depth: u32, canonical: bool) -> Result<()> {
     let m = Mount::open(mt)?;
     println!("/");
-    walk(&m, "/", 0, max_depth)
+    walk(&m, "/", 0, max_depth, canonical)
 }
 
-fn walk(m: &Mount, dir: &str, depth: u32, max_depth: u32) -> Result<()> {
+/// One `tree` line. The raw form leads with the inode number, which
+/// the kernel that populated the image chose; the canonical form
+/// leaves it out so the line names only what the driver read.
+fn tree_line(depth: u32, ino: u32, ft: u8, name: &str, canonical: bool) -> String {
+    let prefix = "  ".repeat(depth as usize + 1);
+    if canonical {
+        format!("{prefix}{} {name}", ftype_str(ft))
+    } else {
+        format!("{prefix}{ino:>10} {} {name}", ftype_str(ft))
+    }
+}
+
+fn walk(m: &Mount, dir: &str, depth: u32, max_depth: u32, canonical: bool) -> Result<()> {
     if depth >= max_depth {
         return Ok(());
     }
@@ -498,16 +510,21 @@ fn walk(m: &Mount, dir: &str, depth: u32, max_depth: u32) -> Result<()> {
     }
     unsafe { fs_ext4_dir_close(iter) };
 
-    let prefix = "  ".repeat(depth as usize + 1);
+    // On-disk order is the order the kernel wrote the entries in (and,
+    // for an htree directory, depends on its hash seed), so the
+    // canonical form sorts by name instead.
+    if canonical {
+        entries.sort_by(|a, b| a.2.as_bytes().cmp(b.2.as_bytes()));
+    }
     for (ino, ft, name) in entries {
-        println!("{prefix}{:>10} {} {}", ino, ftype_str(ft), name);
+        println!("{}", tree_line(depth, ino, ft, &name, canonical));
         if ft == 2 {
             let child = if dir.ends_with('/') {
                 format!("{dir}{name}")
             } else {
                 format!("{dir}/{name}")
             };
-            walk(m, &child, depth + 1, max_depth)?;
+            walk(m, &child, depth + 1, max_depth, canonical)?;
         }
     }
     Ok(())
@@ -1025,5 +1042,36 @@ mod time_tests {
     fn the_century_leap_rules_are_applied() {
         assert_eq!(format_unix_time(951_782_400), "2000-02-29T00:00:00Z");
         assert_eq!(format_unix_time(-2_203_891_200), "1900-03-01T00:00:00Z");
+    }
+}
+
+#[cfg(test)]
+mod tree_tests {
+    use super::tree_line;
+
+    /// The raw form is unchanged: inode right-aligned in ten columns.
+    #[test]
+    fn the_raw_line_leads_with_the_inode() {
+        assert_eq!(
+            tree_line(0, 12, 1, "test.txt", false),
+            "          12 f test.txt"
+        );
+        assert_eq!(
+            tree_line(1, 14, 1, "nested.txt", false),
+            "            14 f nested.txt"
+        );
+    }
+
+    /// Issue #30: two kernels can give the same tree different inode
+    /// numbers, and the canonical line must not tell them apart.
+    #[test]
+    fn the_canonical_line_carries_no_inode() {
+        assert_eq!(tree_line(0, 12, 1, "test.txt", true), "  f test.txt");
+        assert_eq!(
+            tree_line(1, 14, 1, "nested.txt", true),
+            tree_line(1, 9_999, 1, "nested.txt", true)
+        );
+        assert_eq!(tree_line(0, 15, 7, "link.txt", true), "  l link.txt");
+        assert_eq!(tree_line(0, 13, 2, "subdir", true), "  d subdir");
     }
 }
