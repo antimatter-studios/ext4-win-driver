@@ -14,7 +14,7 @@ name = "ext4"
 path = "src/main.rs"
 
 [dependencies]
-am-fs-ext4 = { path = "../rust-fs-ext4", version = "0.5" }
+am-fs-ext4 = { path = "../rust-fs-ext4", version = "0.7" }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 # winfsp-fs-skeleton owns the SCM dispatcher, disk-arrival event pump,

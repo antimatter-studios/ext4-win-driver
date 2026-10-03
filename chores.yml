@@ -42,9 +42,9 @@ vars:
   # failure is an interactive credential prompt on a private-looking
   # URL rather than a clean 404, so it reads as an auth problem.
   FS_CORE_URL: https://github.com/antimatter-studios/rust-fs-core.git
-  FS_CORE_REF: v0.2.4
+  FS_CORE_REF: v0.2.19
   FS_EXT4_URL: https://github.com/christhomas/rust-fs-ext4.git
-  FS_EXT4_REF: v0.5.0
+  FS_EXT4_REF: v0.7.0
   # Pinned to the tag, not to `main`. A floating ref was one of the two
   # things wrong with the submodule setup this file replaces, and
   # swapping a floating submodule for a floating sibling would have
