@@ -318,14 +318,14 @@
       "status": "pending",
       "image": "ext4-basic.img",
       "_attempts": [],
-      "_notes": "Recursive tree shape pinned via stdout sha256. ext4 CLI emits LF-only line endings on every platform (Rust println! does not translate on Windows), so the hash is portable. Capture: ./target/release/ext4 tree ../rust-fs-ext4/test-disks/ext4-basic.img | shasum -a 256",
+      "_notes": "Recursive tree shape pinned via stdout sha256 of `ext4 tree --canonical`, which omits inode numbers and sorts each directory by name: raw `tree` output carries the inode numbers and directory order the image-building kernel chose, so a pin over it fails on any other builder (#30). ext4 CLI emits LF-only line endings on every platform (Rust println! does not translate on Windows), so the hash is portable. The canonical listing of _vm-builder.sh build_basic is `/`, `  l link.txt`, `  d lost+found`, `  d subdir`, `    f nested.txt`, `  f test.txt`, one per line. Capture: ./target/release/ext4 tree ../rust-fs-ext4/test-disks/ext4-basic.img --canonical | shasum -a 256",
       "recipe": [
         {
           "op": "build-ext4-image"
         },
         {
           "op": "verify-tree",
-          "expect_args": "'--expect-stdout-sha256' '7d47e62f6c644ddae5f0aa02297f4e6aa8368c03889c300a53ffa3459d00aed9'"
+          "expect_args": "'--expect-stdout-sha256' '8c4141ee9c2a0e682b529910cd9b48d97c217d7850fdbeff732db16208c33ba0' '--' '--canonical'"
         }
       ],
       "image_type": "basic"
