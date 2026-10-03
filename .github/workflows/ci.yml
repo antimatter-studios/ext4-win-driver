@@ -29,6 +29,37 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The harness's runner accepts unknown scenario keys, so a matrix its
+  # schema rejects still runs, and nothing here noticed when it did. This
+  # holds fs-windows-test-harness.toml and test-matrix.json to the harness's
+  # schemas at the pinned HARNESS_REF, through the harness's own validator.
+  matrix-schema:
+    name: matrix schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: check out the harness sibling
+        # Only the harness: the check needs its schemas and validator and
+        # nothing else. The URL and ref are read out of chores.yml, as the
+        # Windows job below does, so the pin stays declared in one place.
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin() { sed -n "s/^  $1: *//p" chores.yml | tr -d '\r'; }
+          git init --quiet ../fs-windows-test-harness
+          git -C ../fs-windows-test-harness remote add origin "$(pin HARNESS_URL)"
+          git -C ../fs-windows-test-harness fetch --quiet --depth 1 origin "$(pin HARNESS_REF)"
+          git -C ../fs-windows-test-harness checkout --quiet FETCH_HEAD
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install --quiet 'jsonschema==4.23.0'
+
+      - run: python3 scripts/check-matrix-schema.py
+
   # The portable half: everything outside `mod winfsp_adapter`. Cheap,
   # fast, and catches most dependency drift before the expensive job
   # even starts.
