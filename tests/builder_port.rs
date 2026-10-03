@@ -10,6 +10,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -18,10 +19,13 @@ fn repo_root() -> PathBuf {
 /// Runs `scripts/builder-ssh.sh` with a fake ssh and returns the argv it
 /// would have passed to the real one, one argument per element.
 fn builder_ssh_args(port: Option<&str>) -> Vec<String> {
+    // Tests run in parallel and two of them ask for the same port, so the
+    // directory is made unique per call, not per port.
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
         "builder-port-{}-{}",
         std::process::id(),
-        port.unwrap_or("unset")
+        CALLS.fetch_add(1, Ordering::Relaxed)
     ));
     fs::create_dir_all(&dir).unwrap();
     let fake_ssh = dir.join("ssh");
