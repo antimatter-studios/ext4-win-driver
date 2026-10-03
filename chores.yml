@@ -66,6 +66,14 @@ vars:
   HARNESS_REF: v4.2.0
 
 tasks:
+  matrix:check:
+    desc: Validate fs-windows-test-harness.toml and test-matrix.json against the harness's schemas
+    # The runner accepts unknown scenario keys, so a matrix the schema
+    # rejects still runs; this holds the matrix to the schema instead.
+    # Needs the harness sibling (`chore siblings`) and `jsonschema`.
+    cmds:
+      - python3 scripts/check-matrix-schema.py
+
   siblings:
     desc: Check out the sibling repos this crate builds against, at their pinned refs
     # REFUSES TO TOUCH A DIRTY SIBLING. A checkout is destructive to
