@@ -126,6 +126,11 @@ enum Cmd {
         mt: MountArgs,
         #[arg(long, default_value_t = 64)]
         max_depth: u32,
+        /// Omit inode numbers and sort each directory by name, so the
+        /// output depends only on the tree's names, types and shape,
+        /// not on where the kernel that wrote the image placed them.
+        #[arg(long)]
+        canonical: bool,
     },
     /// Inspect partition table (MBR/GPT) of a disk image or raw device.
     Parts { image: PathBuf },
@@ -363,7 +368,11 @@ fn main() -> Result<()> {
             offset,
             length,
         } => cmd::cat(&mt, &path, offset, length),
-        Cmd::Tree { mt, max_depth } => cmd::tree(&mt, max_depth),
+        Cmd::Tree {
+            mt,
+            max_depth,
+            canonical,
+        } => cmd::tree(&mt, max_depth, canonical),
         Cmd::Parts { image } => cmd::parts(&image),
         Cmd::Audit {
             mt,
