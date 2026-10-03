@@ -45,6 +45,7 @@ ssh_wrapper_dir=""
 ssh_mux_pid=""
 builder_vm_pid=""
 builder_vm_owned=0   # 1 only when this invocation started the VM
+export EXT4_BUILDER_PORT="${EXT4_BUILDER_PORT:-2223}"
 
 # Allow `--keep-images` to opt out of cleanup. Strip it before
 # forwarding so the harness runner doesn't see an unknown flag.
@@ -225,8 +226,9 @@ stop_builder_vm() {
     local builder_key="$repo_root/../rust-fs-ext4/test-disks/.vm-cache/builder-key"
     echo "[run-matrix] builder VM: shutting down (pid=${builder_vm_pid})..." >&2
     ssh \
-        -p 2222 \
+        -p "$EXT4_BUILDER_PORT" \
         -i "$builder_key" \
+        -o IdentitiesOnly=yes \
         -o StrictHostKeyChecking=no \
         -o BatchMode=yes \
         -o ControlPath=none \
