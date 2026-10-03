@@ -42,7 +42,7 @@ vars:
   # failure is an interactive credential prompt on a private-looking
   # URL rather than a clean 404, so it reads as an auth problem.
   FS_CORE_URL: https://github.com/antimatter-studios/rust-fs-core.git
-  FS_CORE_REF: v0.2.4
+  FS_CORE_REF: v0.2.16
   FS_EXT4_URL: https://github.com/christhomas/rust-fs-ext4.git
   FS_EXT4_REF: v0.5.0
   # Pinned to the tag, not to `main`. A floating ref was one of the two
@@ -143,12 +143,51 @@ tasks:
           done
         exit $rc
 
+  # THE TIERS. Each runs through scripts/tier.sh: QUIET BY DEFAULT. The
+  # whole run goes to tmp/logs/<tier>.log and a pass prints one verdict
+  # line; a passing run that printed more than the tier's measured budget
+  # fails with status 65. `-- --verbose` (or OUTPUT_BUDGET_VERBOSE=1)
+  # streams the run as well, still under the budget. ci.yml runs the same
+  # lines, so a developer and CI are held to the same numbers.
   check:
     desc: Type-check the parts that build off Windows
     cmds:
-      - cargo check --locked --no-default-features
+      - scripts/tier.sh check -- cargo check --locked --no-default-features
 
   test:
     desc: Run the tests that do not need Windows
     cmds:
-      - cargo test --locked --no-default-features
+      - scripts/tier.sh test -- cargo test --locked --no-default-features
+
+  build:host:
+    desc: Build the host-side CLI the matrix's verifiers run (target/release/ext4)
+    cmds:
+      - cargo build --release --locked --no-default-features --quiet
+
+  matrix:
+    desc: 'Run test-matrix.json on the Windows VM, quietly: `chore matrix -- [filter] [--verbose]`'
+    # scripts/run-matrix.sh starts the Alpine builder VM, then runs the
+    # harness: ssh to the Windows VM, a PowerShell step per recipe op, a
+    # mount and unmount each. All of it -- every echoed command line, every
+    # verifier's output -- goes to tmp/logs/matrix.log; what is printed is
+    # the verdict, and the scenario count against its floor.
+    #
+    # THE FLOOR IS 40 on an unfiltered run: run-matrix.sh runs the 5-scenario
+    # smoke group as a gate first, then the 35 scenarios that have a recipe
+    # (the other 2 of the 37 are markers, reported as ignored). Both runs
+    # report a `test result:` line and the floor counts both. A filtered run
+    # selects its own count, so it has no floor.
+    deps: [build:host]
+    cmds:
+      - |
+        set -eu
+        filter=""
+        for arg in {{.CLI_ARGS}}; do
+          case "$arg" in --verbose|-v) continue ;; esac
+          filter="$filter $arg"
+        done
+        # shellcheck disable=SC2086  # the words are the point
+        scripts/tier.sh matrix -- bash scripts/run-matrix.sh $filter
+        if [ -z "$filter" ]; then
+          scripts/core.sh test-floor matrix 40
+        fi

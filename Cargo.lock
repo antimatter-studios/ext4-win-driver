@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "am-fs-core"
-version = "0.2.4"
+version = "0.2.16"
 
 [[package]]
 name = "am-fs-ext4"

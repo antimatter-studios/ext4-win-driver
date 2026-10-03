@@ -265,15 +265,37 @@ directly.
 Run the test matrix (Mac -> SSH -> Windows VM -> diag pull):
 
 ```sh
-bash ../fs-windows-test-harness/scripts/run-tests.sh                 # full matrix
-bash ../fs-windows-test-harness/scripts/run-tests.sh basic-ro-list   # one scenario
-bash ../fs-windows-test-harness/scripts/run-tests.sh --help          # all flags
+chore matrix                          # full matrix, quietly
+chore matrix -- basic-ro-list         # one scenario (substring filter)
+chore matrix -- rw- --verbose         # stream the run as well
 ```
 
-On the very first run, the script prompts for VM details (user, IP,
-SSH key, workdir, image dir) and writes `.test-env`; subsequent runs
-skip straight to ship + run + diag-pull. Use `--reset` to wipe
-`.test-env` and re-prompt (e.g. after VM IP change).
+`chore matrix` builds the host CLI the verifiers use, then runs
+`scripts/run-matrix.sh`, which starts the Alpine VM that builds each
+scenario's ext4 image and hands off to the harness's `run-tests.sh`. It is
+quiet: the whole run (every SSH session, echoed PowerShell command line and
+verifier) goes to `tmp/logs/matrix.log`, and what is printed is one verdict
+line and the executed-scenario count against its floor. A run that passed
+but printed more than the tier's measured budget fails with status 65; the
+budgets are the table in `scripts/tier.sh`, and the wrapper itself is
+rust-fs-core's `scripts/output-budget.sh`, not a copy.
+
+CI runs the same matrix on every pull request, in the `matrix` job on
+`windows-latest`: the runner is its own Windows VM over SSH to `localhost`,
+and the images are built by the same `_vm-builder.sh` on an Ubuntu runner
+first (`EXT4_PREBUILT_IMAGES`), because a Windows runner cannot start the
+builder VM.
+
+The first run needs the VM's details. A quiet run has no terminal for the
+harness to prompt on, so pass them once as flags and the harness writes
+`.test-env` (gitignored) for every later run:
+
+```sh
+chore matrix -- --vm-host=USER@IP --ssh-key=/path/to/key --vm-workdir=C:/path/on/vm
+```
+
+After a VM IP change or key rotation, pass the new value the same way; any
+flag given is written back to `.test-env`.
 
 Diagnostics land under `test-diagnostics/run-<UTC>/`. See the harness's
 [`docs/triage-protocol.md`](../fs-windows-test-harness/docs/triage-protocol.md)

@@ -459,7 +459,7 @@
         },
         {
           "op": "verify-parts",
-          "expect_args": "'--expect-stdout-contains' 'GPT:0FC63DAF-8483-4772-8E79-3D69D8477DE4'"
+          "expect_args": "'--expect-stdout-contains' 'GPT:linux'"
         },
         {
           "op": "verify-parts",
