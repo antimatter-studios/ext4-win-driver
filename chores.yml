@@ -66,7 +66,12 @@ vars:
   # v4.2.0: a scenario must pass on its first attempt (no more silent
   # retries), and one matrix run holds the VM workdir at a time. Both
   # change what a run means, so a bump is read, not just typed.
-  HARNESS_REF: v4.2.0
+  # v4.3.0: every VM command runs under a bound and a timeout names the
+  # command, and the VM-lock helper no longer streams on remote stdin.
+  # Under v4.2.0 the CI matrix stopped silently after taking the lock and
+  # was killed by the step's 30-minute timeout. v4.3.1: a host-side op's
+  # double quotes reach it intact on a Windows orchestrator.
+  HARNESS_REF: v4.3.1
 
 tasks:
   matrix:check:
