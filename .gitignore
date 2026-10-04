@@ -9,3 +9,5 @@ test-diagnostics/
 .history/
 # Default HOST_IMAGE_DIR for scripts/run-matrix.sh: run output, never source.
 diskimages/
+/tmp/
+/ext4-images/

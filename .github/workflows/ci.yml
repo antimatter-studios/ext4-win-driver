@@ -22,8 +22,23 @@ name: CI
 on:
   push:
     branches: [main]
+  # EVERY pull request, not only those targeting main. With
+  # `branches: [main]` a PR stacked on another branch got no run at all,
+  # and a PR with no checks has no failing checks.
   pull_request:
-    branches: [main]
+  # The full Windows matrix also runs weekly against main, so a change in
+  # the runner image, WinFsp or the pinned siblings shows up without a
+  # pull request to provoke it, and on demand.
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+# A newer push to a pull request cancels its older run: the matrix job holds
+# a Windows runner for most of an hour, and a superseded run's answer is
+# about a commit nobody will merge. Runs on main are never cancelled.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -111,9 +126,25 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - run: cargo check --locked --no-default-features
-      - run: cargo clippy --locked --no-default-features --all-targets -- -D warnings
-      - run: cargo test --locked --no-default-features
+      # The family's scripts run from rust-fs-core (scripts/core.sh), and
+      # this repository keeps no copy of them.
+      - run: scripts/core.sh family-check
+
+      # EACH STEP IS A QUIET TIER: scripts/tier.sh writes the whole run to
+      # tmp/logs/<tier>.log, prints one verdict line, and fails a passing
+      # run that printed more than its measured budget (exit 65). The logs
+      # are uploaded below, pass or fail.
+      - run: scripts/tier.sh check -- cargo check --locked --no-default-features
+      - run: scripts/tier.sh clippy -- cargo clippy --locked --no-default-features --all-targets -- -D warnings
+      - run: scripts/tier.sh test -- cargo test --locked --no-default-features
+
+      - name: upload tier logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tier-logs-${{ matrix.os }}
+          path: tmp/logs/
+          if-no-files-found: warn
 
   # The half that only exists on Windows, and the reason this file is
   # worth its runtime.
@@ -127,103 +158,10 @@ jobs:
         # No submodules; winfsp-rs is a sibling like everything
         # else, and the header patch below reaches into that checkout.
 
-      - name: check out sibling repos
-        # chore publishes darwin and linux builds only, and `uname -s`
-        # under Git Bash reports MINGW64_NT-*, so there is nothing to
-        # install here. Cloning directly restates what `chore siblings`
-        # does — which is the duplication chores.yml exists to remove —
-        # so it reads the refs OUT OF chores.yml rather than hardcoding
-        # them, and the single declaration still holds.
-        shell: bash
-        run: |
-          set -euo pipefail
-          pin() { sed -n "s/^  $1: *//p" chores.yml | tr -d '\r'; }
-          # URL as well as ref. The family is not all in one org --
-          # rust-fs-ext4 lives under christhomas/ while its siblings are
-          # under antimatter-studios/ -- so reconstructing a URL from
-          # the repo name silently points at a repo that does not exist.
-          # git then prompts for credentials, and the run dies with
-          # "could not read Username", which reads as an auth problem
-          # rather than a wrong URL.
-          printf '%s\t%s\t%s\n' \
-            rust-fs-core       "$(pin FS_CORE_URL)" "$(pin FS_CORE_REF)" \
-            rust-fs-ext4       "$(pin FS_EXT4_URL)" "$(pin FS_EXT4_REF)" \
-            winfsp-fs-skeleton "$(pin SKELETON_URL)" "$(pin SKELETON_REF)" \
-            fs-windows-test-harness "$(pin HARNESS_URL)" "$(pin HARNESS_REF)" \
-            winfsp-rs          "$(pin WINFSP_RS_URL)" "$(pin WINFSP_RS_REF)" \
-          | while IFS="$(printf '\t')" read -r name url ref; do
-              echo "cloning $name at $ref"
-              # init + fetch-by-ref, not clone. winfsp-rs is pinned to a
-              # bare commit that no published branch contains, so a
-              # plain clone does not have it and `--branch` cannot name
-              # it. Asking the server for the SHA directly does work.
-              git init --quiet "../$name"
-              git -C "../$name" remote add origin "$url"
-              git -C "../$name" fetch --quiet --depth 1 origin "$ref"
-              git -C "../$name" checkout --quiet FETCH_HEAD
-            done
-
-      - name: install Rust + gnullvm target
-        shell: pwsh
-        run: |
-          rustup install stable
-          rustup default stable
-          rustup target add x86_64-pc-windows-gnullvm
-          rustc --version
-
-      - name: install LLVM-MinGW (gnullvm toolchain)
-        shell: pwsh
-        run: |
-          # Provides the gnullvm runtime + sysroot. Its standalone
-          # release zip does NOT ship libclang.dll, so libclang for
-          # bindgen comes from the separate step below.
-          $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/${{ env.LLVM_MINGW_VER }}/llvm-mingw-${{ env.LLVM_MINGW_VER }}-ucrt-x86_64.zip"
-          $zip = "$env:RUNNER_TEMP\llvm-mingw.zip"
-          Invoke-WebRequest -Uri $url -OutFile $zip
-          Expand-Archive -Path $zip -DestinationPath "$env:RUNNER_TEMP\llvm-mingw" -Force
-          $extracted = Get-ChildItem "$env:RUNNER_TEMP\llvm-mingw" -Directory | Select-Object -First 1
-          Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $extracted.FullName 'bin')
-
-      - name: install LLVM (libclang for bindgen)
-        uses: KyleMayes/install-llvm-action@v2
+      - name: siblings + Windows toolchain (Rust gnullvm, LLVM-MinGW, libclang, WinFsp, fsctl.h patch)
+        uses: ./.github/actions/windows-toolchain
         with:
-          # Pinned to 18.1 for the same reason release.yml pins it: old
-          # enough to parse LLVM-MinGW's clang-22 sysroot headers
-          # without the AVX-512 self-compile errors a same-version
-          # libclang trips on.
-          version: '18.1'
-          directory: ${{ runner.temp }}/llvm
-
-      - name: install WinFsp (build-time headers + libs)
-        shell: pwsh
-        run: choco install winfsp --yes --no-progress
-
-      - name: patch fsctl.h for the _ReadWriteBarrier collision
-        shell: pwsh
-        run: |
-          # clang's MSVC compatibility predefines _ReadWriteBarrier as a
-          # 0-arg function-like macro via intrin.h. WinFsp's fsctl.h then
-          # forward-declares `void _ReadWriteBarrier(void);`, which the
-          # preprocessor mangles into `void ;`. `-U_ReadWriteBarrier`
-          # does not help, because intrin.h is included after it.
-          #
-          # Wrap the forward-decl in push_macro / undef / pop_macro so
-          # the macro is hidden at exactly the point the function has to
-          # be declared. Both the vendored header and the choco-installed
-          # one are patched, since which is read depends on winfsp-sys's
-          # `system` feature. Kept identical to release.yml: if these two
-          # ever disagree, CI stops predicting the release.
-          $needle = '    void _ReadWriteBarrier(void);'
-          $replacement = "#pragma push_macro(`"_ReadWriteBarrier`")`n#undef _ReadWriteBarrier`n    void _ReadWriteBarrier(void);`n#pragma pop_macro(`"_ReadWriteBarrier`")"
-          foreach ($f in @(
-            '../winfsp-rs/winfsp-sys/winfsp/inc/winfsp/fsctl.h',
-            'C:\Program Files (x86)\WinFsp\inc\winfsp\fsctl.h'
-          )) {
-            if (-not (Test-Path $f)) { "Skipping (not found): $f"; continue }
-            $content = Get-Content $f -Raw
-            Set-Content -Path $f -Value ($content -replace [regex]::Escape($needle), $replacement) -NoNewline
-            "Patched $f"
-          }
+          llvm-mingw-version: ${{ env.LLVM_MINGW_VER }}
 
       - uses: actions/cache@v4
         with:
@@ -234,5 +172,198 @@ jobs:
           key: windows-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: cargo check --features mount,service
+        shell: bash
+        run: scripts/tier.sh check-windows -- cargo check --locked --features mount,service --target x86_64-pc-windows-gnullvm
+
+      - name: upload tier logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tier-logs-windows
+          path: tmp/logs/
+          if-no-files-found: warn
+
+  # THE MATRIX: test-matrix.json, run by fs-windows-test-harness against a
+  # real WinFsp mount. Until this job it ran only on a developer's Mac with
+  # a Windows VM, so CI never exercised the driver at all.
+  #
+  # The images come first, from Linux. Every scenario's image is built by
+  # rust-fs-ext4's test-disks/_vm-builder.sh (mkfs.ext4, then a loop mount
+  # to populate it -- xattrs, ACLs, symlinks, a GPT whole disk). On a Mac
+  # that runs in an Alpine VM; a Windows runner cannot start one, so the
+  # same script runs here, as root on ubuntu-latest, once per image type
+  # the matrix names. scripts/build-ext4-image.sh hands each scenario its
+  # own copy.
+  matrix-images:
+    name: ext4 images for the matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: rust-fs-ext4 at the image builder's pin (#37)
+        run: |
+          set -euo pipefail
+          pin() { sed -n "s/^  $1: *//p" chores.yml | tr -d '\r'; }
+          git clone --quiet --depth 1 --branch "$(pin EXT4_IMAGE_BUILDER_REF)" "$(pin FS_EXT4_URL)" ../rust-fs-ext4
+      - name: install the builder's tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq e2fsprogs attr acl fdisk >/dev/null
+      - name: build one image per type test-matrix.json names
+        run: |
+          set -euo pipefail
+          types=$(python3 -c 'import json; print(" ".join(sorted({s["volume_params"]["image_type"] for s in json.load(open("test-matrix.json"))["scenarios"].values() if isinstance(s, dict) and s.get("volume_params", {}).get("image_type")})))')
+          echo "image types: $types"
+          # An empty list builds nothing and passes; the matrix would then
+          # fail on its first scenario, far from the cause.
+          [ -n "$types" ] || { echo "::error::test-matrix.json names no volume_params.image_type"; exit 1; }
+          mkdir -p tmp/logs
+          for t in $types; do
+            sudo sh ../rust-fs-ext4/test-disks/_vm-builder.sh "$PWD/ext4-images/$t" "$t" >> tmp/logs/matrix-images.log 2>&1 \
+              || { echo "building '$t' failed; see tmp/logs/matrix-images.log"; cat tmp/logs/matrix-images.log; exit 1; }
+          done
+          sudo chown -R "$(id -u):$(id -g)" ext4-images
+          ls -l ext4-images/*/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ext4-matrix-images
+          path: ext4-images/
+          if-no-files-found: error
+          retention-days: 3
+
+  # The runner is its own "Windows VM": sshd on localhost, key auth,
+  # PowerShell as the default shell -- the shape rust-fs-ntfs's Windows jobs
+  # and the harness's own smoke job use. The driver is built in place and
+  # the run is --no-ship, so {vm.workdir} is this checkout and
+  # {vm.harness_root} is the ../fs-windows-test-harness sibling: there is
+  # nothing to copy to a VM that is the same machine.
+  matrix:
+    name: matrix (windows, WinFsp, test-matrix.json)
+    runs-on: windows-latest
+    needs: [matrix-images]
+    timeout-minutes: 75
+    env:
+      LLVM_MINGW_VER: 20260421
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: siblings + Windows toolchain (Rust gnullvm, LLVM-MinGW, libclang, WinFsp, fsctl.h patch)
+        uses: ./.github/actions/windows-toolchain
+        with:
+          llvm-mingw-version: ${{ env.LLVM_MINGW_VER }}
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            ../fs-windows-test-harness/runner/target
+          key: windows-matrix-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: make this runner its own Windows VM (sshd, key auth, PowerShell)
         shell: pwsh
-        run: cargo check --locked --features mount,service --target x86_64-pc-windows-gnullvm
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Key generated with Git's ssh-keygen: pwsh would hand
+          # `-N '""'` over as a literal two-character passphrase.
+          & "$env:ProgramFiles\Git\bin\bash.exe" -c 'mkdir -p ~/.ssh && ssh-keygen -t ed25519 -N "" -f ~/.ssh/ext4-matrix -q'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # runneradmin is an administrator, and sshd_config sends
+          # administrators to this file, which must be admin/SYSTEM-only.
+          $keys = "$env:ProgramData\ssh\administrators_authorized_keys"
+          Get-Content "$env:USERPROFILE\.ssh\ext4-matrix.pub" | Set-Content -Encoding ascii $keys
+          icacls $keys /inheritance:r /grant 'Administrators:F' /grant 'SYSTEM:F' | Out-Null
+          New-ItemProperty -Path HKLM:\SOFTWARE\OpenSSH -Name DefaultShell `
+            -Value "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+            -PropertyType String -Force | Out-Null
+          # An SSH session gets the machine environment sshd started with,
+          # not this job's. Put WinFsp's bin directory on the machine PATH
+          # before the restart, so the driver's delay-loaded winfsp DLL
+          # resolves in the sessions the matrix's mount steps run in.
+          $winfspBin = Join-Path ${env:ProgramFiles(x86)} 'WinFsp\bin'
+          $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          [Environment]::SetEnvironmentVariable('Path', "$machinePath;$winfspBin", 'Machine')
+          Restart-Service sshd
+
+      - name: build the driver (mount) where the ops look for it
+        run: |
+          set -euo pipefail
+          scripts/tier.sh build-windows -- cargo build --release --locked --features mount --target x86_64-pc-windows-gnullvm
+          # fs-windows-test-harness.toml's ops run
+          # {vm.workdir}/target/release/ext4.exe, and the host verifiers
+          # target/release/ext4 -- the layout a native build has.
+          mkdir -p target/release
+          cp target/x86_64-pc-windows-gnullvm/release/ext4.exe target/release/ext4.exe
+          cp target/x86_64-pc-windows-gnullvm/release/ext4.exe target/release/ext4-host.exe
+
+      - name: the host verifiers' ext4 runs with Git Bash path conversion off
+        # The host verifiers run `target/release/ext4 ls IMAGE /` from Git
+        # Bash, and Git Bash rewrites an argument that looks like a POSIX
+        # path when it starts a native program: the in-image path `/`
+        # reached ext4.exe as `C:/Program Files/Git/`. Exporting
+        # MSYS2_ARG_CONV_EXCL for the whole matrix is not an option, because
+        # the harness itself hands cargo POSIX paths that must be converted.
+        # So `target/release/ext4` is a script (bash runs a file named
+        # exactly `ext4` in preference to ext4.exe) that turns conversion
+        # off for this one program; every path the matrix hands it is
+        # inside the image or already a Windows path. The VM-side ops run
+        # ext4.exe from PowerShell and never see it.
+        #
+        # WRITTEN FROM POWERSHELL, AND IT CALLS ext4-host.exe. Git Bash
+        # treats `ext4` and `ext4.exe` as one file when only the .exe
+        # exists, so a shell redirect to target/release/ext4 overwrote
+        # ext4.exe itself, and a shim exec'ing ext4.exe exec'd itself
+        # forever. Measured, in run 37077850066.
+        shell: pwsh
+        run: |
+          $shim = "#!/usr/bin/env bash`nMSYS2_ARG_CONV_EXCL='*' exec `"`$(dirname `"`$0`")/ext4-host.exe`" `"`$@`"`n"
+          [IO.File]::WriteAllText("$PWD\target\release\ext4", $shim)
+          Get-ChildItem target\release\ext4* | Format-Table -AutoSize Name, Length
+
+      - name: build the harness runner
+        # Before the matrix, so the matrix log holds the matrix and not a
+        # cold compile of the runner. --quiet prints nothing on success.
+        run: cargo build --quiet --manifest-path ../fs-windows-test-harness/runner/Cargo.toml --release --bin run-matrix
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext4-matrix-images
+          path: ext4-images
+
+      - name: the matrix, quietly, under its budget
+        # Measured at 71 s for all 35 scenarios on a red run. A hung mount
+        # or op must not hold the runner for the job's whole budget, and
+        # stopping here still uploads the diagnostics below.
+        timeout-minutes: 30
+        env:
+          EXT4_PREBUILT_IMAGES: ${{ github.workspace }}/ext4-images
+        run: |
+          set -euo pipefail
+          export EXT4_PREBUILT_IMAGES="$(cygpath -u "$EXT4_PREBUILT_IMAGES")"
+          scripts/tier.sh matrix -- bash scripts/run-matrix.sh \
+            --vm-host=runneradmin@localhost \
+            --ssh-key="$(cygpath -m ~/.ssh/ext4-matrix)" \
+            --vm-workdir="$(cygpath -m "$PWD")" \
+            --no-ship
+
+      - name: every scenario with a recipe executed
+        # 35 of test-matrix.json's 37 scenarios have a recipe; the other
+        # two are markers for test infrastructure that does not exist yet
+        # (event injection, an MSI runner), which the runner reports as
+        # ignored and tier.sh counts. A run that dispatched less than 35
+        # cannot pass, whatever its exit status.
+        run: scripts/core.sh test-floor matrix 35
+
+      - name: upload matrix logs and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matrix-logs-and-diagnostics
+          path: |
+            tmp/logs/
+            test-diagnostics/
+          if-no-files-found: warn
