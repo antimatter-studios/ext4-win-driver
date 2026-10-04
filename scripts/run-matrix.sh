@@ -185,8 +185,8 @@ ensure_vm_workdir() {
 # duration of the matrix run. Each recipe's `build-ext4-image` op SSHes
 # into this VM to create + format + populate one image.
 start_builder_vm() {
-    local builder_script="$repo_root/../rust-fs-ext4/test-disks/build-ext4-feature-images.sh"
-    local env_file="$repo_root/../rust-fs-ext4/test-disks/.vm-cache/server.env"
+    local builder_script="$repo_root/../rust-fs-ext4-image-builder/test-disks/build-ext4-feature-images.sh"
+    local env_file="$repo_root/../rust-fs-ext4-image-builder/test-disks/.vm-cache/server.env"
 
     # If a previous invocation left server.env and the qemu is still alive,
     # reuse it — don't start a second VM on the same port.
@@ -229,7 +229,7 @@ stop_builder_vm() {
     # Don't stop a VM we didn't start — it might still be in use by another
     # concurrent invocation that is reusing it.
     [[ "${builder_vm_owned:-0}" -eq 0 ]] && return 0
-    local builder_key="$repo_root/../rust-fs-ext4/test-disks/.vm-cache/builder-key"
+    local builder_key="$repo_root/../rust-fs-ext4-image-builder/test-disks/.vm-cache/builder-key"
     echo "[run-matrix] builder VM: shutting down (pid=${builder_vm_pid})..." >&2
     ssh \
         -p "$EXT4_BUILDER_PORT" \

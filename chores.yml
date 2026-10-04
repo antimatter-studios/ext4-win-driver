@@ -48,7 +48,9 @@ vars:
   # The matrix's ext4 images are made by rust-fs-ext4's _vm-builder.sh,
   # which that repository removed at v0.6.0 (#257): v0.5.1 is the last
   # release that ships it. Pinned apart from the driver so a driver bump
-  # cannot take the builder away again (#37).
+  # cannot take the builder away again: `chore siblings` checks it out as
+  # ../rust-fs-ext4-image-builder, the checkout every script that starts or
+  # reaches the builder uses (#37).
   EXT4_IMAGE_BUILDER_REF: v0.5.1
   # Pinned to the tag, not to `main`. A floating ref was one of the two
   # things wrong with the submodule setup this file replaces, and
@@ -100,6 +102,7 @@ tasks:
         printf '%s\t%s\t%s\n' \
           rust-fs-core       '{{.FS_CORE_URL}}' '{{.FS_CORE_REF}}' \
           rust-fs-ext4       '{{.FS_EXT4_URL}}' '{{.FS_EXT4_REF}}' \
+          rust-fs-ext4-image-builder '{{.FS_EXT4_URL}}' '{{.EXT4_IMAGE_BUILDER_REF}}' \
           winfsp-fs-skeleton '{{.SKELETON_URL}}' '{{.SKELETON_REF}}' \
           fs-windows-test-harness '{{.HARNESS_URL}}' '{{.HARNESS_REF}}' \
           winfsp-rs          '{{.WINFSP_RS_URL}}' '{{.WINFSP_RS_REF}}' \
@@ -150,6 +153,7 @@ tasks:
         printf '%s\t%s\n' \
           rust-fs-core       '{{.FS_CORE_REF}}' \
           rust-fs-ext4      '{{.FS_EXT4_REF}}' \
+          rust-fs-ext4-image-builder '{{.EXT4_IMAGE_BUILDER_REF}}' \
           winfsp-fs-skeleton '{{.SKELETON_REF}}' \
           fs-windows-test-harness '{{.HARNESS_REF}}' \
         | while IFS="$(printf '\t')" read -r name ref; do
