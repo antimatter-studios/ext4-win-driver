@@ -200,11 +200,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: rust-fs-ext4 at its pin (the image builder lives there)
+      - name: rust-fs-ext4 at the image builder's pin (#37)
         run: |
           set -euo pipefail
           pin() { sed -n "s/^  $1: *//p" chores.yml | tr -d '\r'; }
-          git clone --quiet --depth 1 --branch "$(pin FS_EXT4_REF)" "$(pin FS_EXT4_URL)" ../rust-fs-ext4
+          git clone --quiet --depth 1 --branch "$(pin EXT4_IMAGE_BUILDER_REF)" "$(pin FS_EXT4_URL)" ../rust-fs-ext4
       - name: install the builder's tools
         run: |
           sudo apt-get update -qq

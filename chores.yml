@@ -45,6 +45,11 @@ vars:
   FS_CORE_REF: v0.2.19
   FS_EXT4_URL: https://github.com/christhomas/rust-fs-ext4.git
   FS_EXT4_REF: v0.7.0
+  # The matrix's ext4 images are made by rust-fs-ext4's _vm-builder.sh,
+  # which that repository removed at v0.6.0 (#257): v0.5.1 is the last
+  # release that ships it. Pinned apart from the driver so a driver bump
+  # cannot take the builder away again (#37).
+  EXT4_IMAGE_BUILDER_REF: v0.5.1
   # Pinned to the tag, not to `main`. A floating ref was one of the two
   # things wrong with the submodule setup this file replaces, and
   # swapping a floating submodule for a floating sibling would have
