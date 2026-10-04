@@ -71,6 +71,12 @@ if [[ "$host_image_dir" != /* ]]; then
     host_image_dir="$repo_root/$host_image_dir"
 fi
 mkdir -p "$host_image_dir"
+# On a Windows orchestrator (Git Bash) the verify ops turn off Git Bash's
+# path rewriting so ext4 paths reach ext4.exe intact; the image path must
+# then already be one a native program can open.
+case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*) host_image_dir="$(cygpath -m "$host_image_dir")" ;;
+esac
 export HOST_IMAGE_DIR="$host_image_dir"
 
 # ── Per-scenario-filter lock ────────────────────────────────────────────────
