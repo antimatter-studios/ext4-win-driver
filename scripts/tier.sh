@@ -41,11 +41,12 @@ shift
 #   check-windows  239 / 12,643 cold, 157 / 9,000 warm (CI)         320 / 16,900
 #   build-windows  229 / 12,138 cold (CI windows-latest)            305 / 16,200
 #   clippy         2 / 187 (CI ubuntu and macos, cold and warm)     3 / 250
-#   test           44 / 2,291 cold, 22 / 1,333 warm (CI ubuntu)     59 / 3,050
-#   matrix         910 / 40,147 on a RED run (see below)            1,220 / 53,600
+#   test           60 / 2,960 cold (CI ubuntu and macos)            80 / 3,950
+#   matrix         494 / 29,895 green (CI windows-latest)           660 / 39,900
 #
 # Measured on GitHub's runners from the verdict lines of runs 37071187610,
-# 37071802059 and 37074571843 (2026-10-02). The cold figures are the first
+# 37071802059 and 37074571843 (2026-10-02); test and matrix from run
+# 37179235549 (2026-10-04), after the tests #31 to #36 added. The cold figures are the first
 # run after Cargo.lock changed: a line per crate compiled, plus, on Windows,
 # the driver's own warnings.
 #
@@ -54,24 +55,19 @@ shift
 # a line, so the budget is the measurement plus one line; any warning fails
 # the step under -D warnings anyway.
 #
-# THE MATRIX ROW IS PROVISIONAL, and the only one not measured on a passing
-# run. The first CI run of test-matrix.json (run 37074571843, 35 scenarios
-# dispatched in 71 s) failed 34 of them for reasons of the CI shape -- the
-# fixes are in this change -- and printed 910 lines / 40,147 bytes, every
-# failure carrying its step's stderr. A green run prints less than a red one,
-# so a budget a third above the red run fits a green run with room, and it
-# still catches a run that starts printing per step. Replace it with a green
-# run's measurement plus a third once the matrix passes. It is also the only
-# tier whose length depends on a machine (the VM, its SSH banner, its mount
-# timing) rather than on this repository, so it is the one most likely to
-# need raising -- with a measurement.
+# THE MATRIX ROW is the first green run of all 35 scenarios (run
+# 37179235549, 19 minutes after the red one whose 16 failures were Git
+# Bash rewriting ext4 paths). It is the only tier whose length depends on a
+# machine (the VM, its SSH banner, its mount timing) rather than on this
+# repository, so it is the one most likely to need raising -- with a
+# measurement.
 case "$TIER" in
     check)         MAX_LINES=48;   MAX_BYTES=2450 ;;
     check-windows) MAX_LINES=320;  MAX_BYTES=16900 ;;
     build-windows) MAX_LINES=305;  MAX_BYTES=16200 ;;
     clippy)        MAX_LINES=3;    MAX_BYTES=250 ;;
-    test)          MAX_LINES=59;   MAX_BYTES=3050 ;;
-    matrix)        MAX_LINES=1220; MAX_BYTES=53600 ;;
+    test)          MAX_LINES=80;   MAX_BYTES=3950 ;;
+    matrix)        MAX_LINES=660;  MAX_BYTES=39900 ;;
     *)
         echo "tier.sh: '$TIER' has no budget. Add a measured row to scripts/tier.sh." >&2
         exit 2
