@@ -204,7 +204,7 @@ jobs:
         run: |
           set -euo pipefail
           pin() { sed -n "s/^  $1: *//p" chores.yml | tr -d '\r'; }
-          git clone --quiet --depth 1 --branch "$(pin EXT4_IMAGE_BUILDER_REF)" "$(pin FS_EXT4_URL)" ../rust-fs-ext4
+          git clone --quiet --depth 1 --branch "$(pin EXT4_IMAGE_BUILDER_REF)" "$(pin FS_EXT4_URL)" ../rust-fs-ext4-image-builder
       - name: install the builder's tools
         run: |
           sudo apt-get update -qq
@@ -219,7 +219,7 @@ jobs:
           [ -n "$types" ] || { echo "::error::test-matrix.json names no volume_params.image_type"; exit 1; }
           mkdir -p tmp/logs
           for t in $types; do
-            sudo sh ../rust-fs-ext4/test-disks/_vm-builder.sh "$PWD/ext4-images/$t" "$t" >> tmp/logs/matrix-images.log 2>&1 \
+            sudo sh ../rust-fs-ext4-image-builder/test-disks/_vm-builder.sh "$PWD/ext4-images/$t" "$t" >> tmp/logs/matrix-images.log 2>&1 \
               || { echo "building '$t' failed; see tmp/logs/matrix-images.log"; cat tmp/logs/matrix-images.log; exit 1; }
           done
           sudo chown -R "$(id -u):$(id -g)" ext4-images
