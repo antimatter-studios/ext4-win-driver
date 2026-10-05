@@ -1,0 +1,240 @@
+# THE WINDOWS MATRIX, as one reusable workflow (#39).
+#
+# test-matrix.json, run by fs-windows-test-harness against a real WinFsp
+# mount. ci.yml calls it with no installer: the driver is built from this
+# commit. release.yml calls it with the name of the artifact holding the
+# installers it just built: that installer is installed silently, and the
+# matrix runs against the ext4.exe it installed, so a release is published
+# only once the driver a user gets has mounted every scenario's image.
+name: matrix
+
+on:
+  workflow_call:
+    inputs:
+      installer:
+        description: >-
+          The artifact holding the x64 Setup.exe to install and test. Empty:
+          build the driver from the checkout instead.
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # THE MATRIX: test-matrix.json, run by fs-windows-test-harness against a
+  # real WinFsp mount. Until this job it ran only on a developer's Mac with
+  # a Windows VM, so CI never exercised the driver at all.
+  #
+  # The images come first, from Linux. Every scenario's image is built by
+  # rust-fs-ext4's test-disks/_vm-builder.sh (mkfs.ext4, then a loop mount
+  # to populate it -- xattrs, ACLs, symlinks, a GPT whole disk). On a Mac
+  # that runs in an Alpine VM; a Windows runner cannot start one, so the
+  # same script runs here, as root on ubuntu-latest, once per image type
+  # the matrix names. scripts/build-ext4-image.sh hands each scenario its
+  # own copy.
+  matrix-images:
+    name: ext4 images for the matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: rust-fs-ext4 at the image builder's pin (#37)
+        run: |
+          set -euo pipefail
+          pin() { sed -n "s/^  $1: *//p" chores.yml | tr -d '\r'; }
+          git clone --quiet --depth 1 --branch "$(pin EXT4_IMAGE_BUILDER_REF)" "$(pin FS_EXT4_URL)" ../rust-fs-ext4-image-builder
+      - name: install the builder's tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq e2fsprogs attr acl fdisk >/dev/null
+      - name: build one image per type test-matrix.json names
+        run: |
+          set -euo pipefail
+          types=$(python3 -c 'import json; print(" ".join(sorted({s["volume_params"]["image_type"] for s in json.load(open("test-matrix.json"))["scenarios"].values() if isinstance(s, dict) and s.get("volume_params", {}).get("image_type")})))')
+          echo "image types: $types"
+          # An empty list builds nothing and passes; the matrix would then
+          # fail on its first scenario, far from the cause.
+          [ -n "$types" ] || { echo "::error::test-matrix.json names no volume_params.image_type"; exit 1; }
+          mkdir -p tmp/logs
+          for t in $types; do
+            sudo sh ../rust-fs-ext4-image-builder/test-disks/_vm-builder.sh "$PWD/ext4-images/$t" "$t" >> tmp/logs/matrix-images.log 2>&1 \
+              || { echo "building '$t' failed; see tmp/logs/matrix-images.log"; cat tmp/logs/matrix-images.log; exit 1; }
+          done
+          sudo chown -R "$(id -u):$(id -g)" ext4-images
+          ls -l ext4-images/*/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ext4-matrix-images
+          path: ext4-images/
+          if-no-files-found: error
+          retention-days: 3
+
+  # The runner is its own "Windows VM": sshd on localhost, key auth,
+  # PowerShell as the default shell -- the shape rust-fs-ntfs's Windows jobs
+  # and the harness's own smoke job use. The driver is built in place and
+  # the run is --no-ship, so {vm.workdir} is this checkout and
+  # {vm.harness_root} is the ../fs-windows-test-harness sibling: there is
+  # nothing to copy to a VM that is the same machine.
+  matrix:
+    name: matrix (windows, WinFsp, test-matrix.json)
+    runs-on: windows-latest
+    needs: [matrix-images]
+    timeout-minutes: 75
+    env:
+      LLVM_MINGW_VER: 20260421
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: siblings + Windows toolchain (Rust gnullvm, LLVM-MinGW, libclang, WinFsp, fsctl.h patch)
+        uses: ./.github/actions/windows-toolchain
+        with:
+          llvm-mingw-version: ${{ env.LLVM_MINGW_VER }}
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            ../fs-windows-test-harness/runner/target
+          key: windows-matrix-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: make this runner its own Windows VM (sshd, key auth, PowerShell)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Key generated with Git's ssh-keygen: pwsh would hand
+          # `-N '""'` over as a literal two-character passphrase.
+          & "$env:ProgramFiles\Git\bin\bash.exe" -c 'mkdir -p ~/.ssh && ssh-keygen -t ed25519 -N "" -f ~/.ssh/ext4-matrix -q'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # runneradmin is an administrator, and sshd_config sends
+          # administrators to this file, which must be admin/SYSTEM-only.
+          $keys = "$env:ProgramData\ssh\administrators_authorized_keys"
+          Get-Content "$env:USERPROFILE\.ssh\ext4-matrix.pub" | Set-Content -Encoding ascii $keys
+          icacls $keys /inheritance:r /grant 'Administrators:F' /grant 'SYSTEM:F' | Out-Null
+          New-ItemProperty -Path HKLM:\SOFTWARE\OpenSSH -Name DefaultShell `
+            -Value "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+            -PropertyType String -Force | Out-Null
+          # An SSH session gets the machine environment sshd started with,
+          # not this job's. Put WinFsp's bin directory on the machine PATH
+          # before the restart, so the driver's delay-loaded winfsp DLL
+          # resolves in the sessions the matrix's mount steps run in.
+          $winfspBin = Join-Path ${env:ProgramFiles(x86)} 'WinFsp\bin'
+          $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          [Environment]::SetEnvironmentVariable('Path', "$machinePath;$winfspBin", 'Machine')
+          Restart-Service sshd
+
+      - name: build the driver (mount) where the ops look for it
+        if: inputs.installer == ''
+        run: |
+          set -euo pipefail
+          scripts/tier.sh build-windows -- cargo build --release --locked --features mount --target x86_64-pc-windows-gnullvm
+          # fs-windows-test-harness.toml's ops run
+          # {vm.workdir}/target/release/ext4.exe, and the host verifiers
+          # target/release/ext4 -- the layout a native build has.
+          mkdir -p target/release
+          cp target/x86_64-pc-windows-gnullvm/release/ext4.exe target/release/ext4.exe
+          cp target/x86_64-pc-windows-gnullvm/release/ext4.exe target/release/ext4-host.exe
+
+      # GIVEN AN INSTALLER, the matrix runs the driver a user gets: the
+      # installer the release just built is installed silently, as winget's
+      # validation installs it, and the ext4.exe it put in Program Files is
+      # the one every op and verifier runs. Nothing is built from source.
+      - name: the installer under test
+        if: inputs.installer != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.installer }}
+          path: dist
+
+      - name: install it silently, and run the installed driver
+        if: inputs.installer != ''
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = (Get-ChildItem 'dist\ext4-win-driver-*-x64-Setup.exe' | Select-Object -First 1).FullName
+          if (-not $setup) { throw "the artifact $env:INSTALLER holds no x64 Setup.exe" }
+          installer\verify-silent.ps1 -SetupPath $setup
+          $installed = Join-Path $env:ProgramFiles 'ext4-win-driver\ext4.exe'
+          if (-not (Test-Path $installed)) { throw "the installer did not put ext4.exe at $installed" }
+          New-Item -ItemType Directory -Force target\release | Out-Null
+          Copy-Item $installed target\release\ext4.exe -Force
+          Copy-Item $installed target\release\ext4-host.exe -Force
+          Write-Host "the matrix runs $installed"
+        env:
+          INSTALLER: ${{ inputs.installer }}
+
+      - name: the host verifiers' ext4 runs with Git Bash path conversion off
+        # The host verifiers run `target/release/ext4 ls IMAGE /` from Git
+        # Bash, and Git Bash rewrites an argument that looks like a POSIX
+        # path when it starts a native program: the in-image path `/`
+        # reached ext4.exe as `C:/Program Files/Git/`. Exporting
+        # MSYS2_ARG_CONV_EXCL for the whole matrix is not an option, because
+        # the harness itself hands cargo POSIX paths that must be converted.
+        # So `target/release/ext4` is a script (bash runs a file named
+        # exactly `ext4` in preference to ext4.exe) that turns conversion
+        # off for this one program; every path the matrix hands it is
+        # inside the image or already a Windows path. The VM-side ops run
+        # ext4.exe from PowerShell and never see it.
+        #
+        # WRITTEN FROM POWERSHELL, AND IT CALLS ext4-host.exe. Git Bash
+        # treats `ext4` and `ext4.exe` as one file when only the .exe
+        # exists, so a shell redirect to target/release/ext4 overwrote
+        # ext4.exe itself, and a shim exec'ing ext4.exe exec'd itself
+        # forever. Measured, in run 37077850066.
+        shell: pwsh
+        run: |
+          $shim = "#!/usr/bin/env bash`nMSYS2_ARG_CONV_EXCL='*' exec `"`$(dirname `"`$0`")/ext4-host.exe`" `"`$@`"`n"
+          [IO.File]::WriteAllText("$PWD\target\release\ext4", $shim)
+          Get-ChildItem target\release\ext4* | Format-Table -AutoSize Name, Length
+
+      - name: build the harness runner
+        # Before the matrix, so the matrix log holds the matrix and not a
+        # cold compile of the runner. --quiet prints nothing on success.
+        run: cargo build --quiet --manifest-path ../fs-windows-test-harness/runner/Cargo.toml --release --bin run-matrix
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext4-matrix-images
+          path: ext4-images
+
+      - name: the matrix, quietly, under its budget
+        # Measured at 71 s for all 35 scenarios on a red run. A hung mount
+        # or op must not hold the runner for the job's whole budget, and
+        # stopping here still uploads the diagnostics below.
+        timeout-minutes: 30
+        env:
+          EXT4_PREBUILT_IMAGES: ${{ github.workspace }}/ext4-images
+        run: |
+          set -euo pipefail
+          export EXT4_PREBUILT_IMAGES="$(cygpath -u "$EXT4_PREBUILT_IMAGES")"
+          scripts/tier.sh matrix -- bash scripts/run-matrix.sh \
+            --vm-host=runneradmin@localhost \
+            --ssh-key="$(cygpath -m ~/.ssh/ext4-matrix)" \
+            --vm-workdir="$(cygpath -m "$PWD")" \
+            --no-ship
+
+      - name: every scenario with a recipe executed
+        # 35 of test-matrix.json's 37 scenarios have a recipe; the other
+        # two are markers for test infrastructure that does not exist yet
+        # (event injection, an MSI runner), which the runner reports as
+        # ignored and tier.sh counts. A run that dispatched less than 35
+        # cannot pass, whatever its exit status.
+        run: scripts/core.sh test-floor matrix 35
+
+      - name: upload matrix logs and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matrix-logs-and-diagnostics
+          path: |
+            tmp/logs/
+            test-diagnostics/
+          if-no-files-found: warn

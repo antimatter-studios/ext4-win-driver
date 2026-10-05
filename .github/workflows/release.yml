@@ -17,6 +17,10 @@ on:
         description: 'Release tag (e.g. v0.1.0). Required when running manually.'
         required: true
         default: ''
+      publish:
+        description: 'Attach the installers to the release. Off: build and run the installed matrix only, which is how a change to this workflow is tried.'
+        type: boolean
+        default: true
 
 permissions:
   contents: write   # gh release upload needs this
@@ -235,46 +239,71 @@ jobs:
           path: dist/verify-silent.log
           if-no-files-found: ignore
 
-      - name: attach to GitHub Release (tag push only)
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: pwsh
-        run: |
-          $tag = '${{ github.ref_name }}'
-          # Idempotent: create the release if absent, then upload.
-          # `gh release view` exits non-zero when the release doesn't
-          # exist, which is the signal to create it. `--generate-notes`
-          # gives a sensible auto-changelog; the maintainer can edit it
-          # afterwards. Both arch jobs race on this; the second `create`
-          # noisily errors and we ignore it.
-          gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --repo $env:GITHUB_REPOSITORY --title $tag --generate-notes 2>&1 | Out-Host
-            if ($LASTEXITCODE -ne 0) {
-              # Race-loser: the other arch beat us to it. Re-check.
-              gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null
-              if ($LASTEXITCODE -ne 0) { throw "Could not create or find release $tag" }
-            }
-          }
-          gh release upload $tag (Get-ChildItem dist\ext4-win-driver-*-${{ matrix.arch }}-Setup.exe).FullName --clobber
-          gh release upload $tag (Get-ChildItem dist\ext4-win-driver-*-${{ matrix.arch }}.msi).FullName --clobber
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  # THE RELEASE IS TESTED AS A USER INSTALLS IT (#39). The x64 installer just
+  # built is installed silently and the whole matrix runs against the
+  # ext4.exe it installed; nothing is attached to the release until that
+  # passes. (The arm64 installer is checked to install silently above; the
+  # matrix needs an x64 runner.)
+  installed-matrix:
+    name: matrix against the installed driver
+    needs: [build]
+    uses: ./.github/workflows/matrix.yml
+    with:
+      installer: ext4-win-driver-x64
 
-      - name: attach to GitHub Release (manual dispatch)
-        if: github.event_name == 'workflow_dispatch'
-        shell: pwsh
-        run: |
-          $tag = '${{ inputs.tag }}'
-          if (-not $tag) { throw "tag input is required for workflow_dispatch" }
-          gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --repo $env:GITHUB_REPOSITORY --title $tag --generate-notes 2>&1 | Out-Host
-            if ($LASTEXITCODE -ne 0) {
-              gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null
-              if ($LASTEXITCODE -ne 0) { throw "Could not create or find release $tag" }
-            }
-          }
-          gh release upload $tag (Get-ChildItem dist\ext4-win-driver-*-${{ matrix.arch }}-Setup.exe).FullName --clobber
-          gh release upload $tag (Get-ChildItem dist\ext4-win-driver-*-${{ matrix.arch }}.msi).FullName --clobber
+  # Attached from here, after the installed run, and never from the build:
+  # a tag whose installed driver fails the matrix publishes nothing.
+  attach:
+    name: attach the installers to the release
+    needs: [build, installed-matrix]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ext4-win-driver-*
+          merge-multiple: true
+          path: dist
+      - name: create the release if it is absent, and upload every installer
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          [ -n "$TAG" ] || { echo "::error::a manual run needs the tag input"; exit 1; }
+          ls -l dist
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes
+          gh release upload "$TAG" dist/*-Setup.exe dist/*.msi --repo "$GITHUB_REPOSITORY" --clobber
+
+  # WINGET, after the release holds the installers it will point at. The
+  # package was registered by hand (microsoft/winget-pkgs#372167); every
+  # later version is submitted from here, by wingetcreate, as a pull request
+  # from the fork the token can push to. Without WINGET_TOKEN the job says so
+  # and stops: a release is not failed for a submission nobody configured.
+  winget:
+    name: submit the new version to winget
+    needs: [attach]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+    steps:
+      - name: submit, or say why not
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:WINGET_TOKEN) {
+            Write-Host "::notice::WINGET_TOKEN is not configured, so this version is not submitted to winget. A token that can push to the winget-pkgs fork, saved as the WINGET_TOKEN secret, makes every later release submit itself."
+            exit 0
+          }
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          $base = "https://github.com/${{ github.repository }}/releases/download/v$version"
+          Invoke-WebRequest https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+          .\wingetcreate.exe update AntimatterStudios.ext4-win-driver --version $version `
+            --urls "$base/ext4-win-driver-$version-x64-Setup.exe|x64" "$base/ext4-win-driver-$version-arm64-Setup.exe|arm64" `
+            --submit --token $env:WINGET_TOKEN
