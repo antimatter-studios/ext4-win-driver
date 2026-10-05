@@ -24,7 +24,7 @@ fn every_script_reaching_the_builder_uses_the_pinned_builder_checkout() {
         "scripts/run-matrix.sh",
         "scripts/builder-ssh.sh",
         "scripts/test-mount",
-        ".github/workflows/ci.yml",
+        ".github/workflows/matrix.yml",
     ] {
         let text = read(script);
         assert!(
