@@ -12,7 +12,7 @@
 # the measurement that justifies it, in the same edit.
 #
 #   tier           measured (lines / bytes)                         budget
-#   check          36 / 1,828 cold, 5 / 480 warm (CI ubuntu)        48 / 2,450
+#   check          77 / 3,598 cold (CI macos, run 37479572141)      103 / 4,800
 #   check-windows  239 / 12,643 cold, 157 / 9,000 warm (CI)         320 / 16,900
 #   build-windows  229 / 12,138 cold (CI windows-latest)            305 / 16,200
 #   clippy         2 / 187 (CI ubuntu and macos, cold and warm)     3 / 250
@@ -36,9 +36,13 @@
 # machine (the VM, its SSH banner, its mount timing) rather than on this
 # repository, so it is the one most likely to need raising -- with a
 # measurement.
-check            48   2450
+check           103   4800
 check-windows   320  16900
 build-windows   305  16200
+# THE CHECK ROW MOVED ON 2026-10-06, from 48 / 2,450: the move to
+# rust-fs-ext4 0.8 and rust-fs-core 0.3 changed Cargo.lock, which misses the
+# build cache, and the cold check printed 69 / 3,258 on ubuntu and
+# 77 / 3,598 on macOS (run 37479572141). The larger plus a third.
 clippy            3    250
 test             80   3950
 matrix          660  39900
