@@ -12,22 +12,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "am-fs-core"
-version = "0.2.19"
-
-[[package]]
-name = "am-fs-ext4"
-version = "0.7.0"
-dependencies = [
- "am-fs-core",
- "bitflags",
- "caseless",
- "crc32c",
- "js-sys",
- "unicode-normalization",
-]
-
-[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -259,10 +243,10 @@ checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 name = "ext4-win-driver"
 version = "0.2.2"
 dependencies = [
- "am-fs-ext4",
  "anyhow",
  "clap",
  "ctrlc",
+ "rust-fs-ext4",
  "widestring",
  "windows",
  "windows-sys 0.61.2",
@@ -525,6 +509,22 @@ name = "regex-syntax"
 version = "0.8.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
+
+[[package]]
+name = "rust-fs-core"
+version = "0.3.3"
+
+[[package]]
+name = "rust-fs-ext4"
+version = "0.8.0"
+dependencies = [
+ "bitflags",
+ "caseless",
+ "crc32c",
+ "js-sys",
+ "rust-fs-core",
+ "unicode-normalization",
+]
 
 [[package]]
 name = "rustc-hash"

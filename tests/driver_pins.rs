@@ -5,7 +5,9 @@
 //! the filesystem, bounds the superblock fields a mount sizes itself
 //! from, and keeps the allocator and journal writer inside the volume.
 //! `am-fs-core` 0.2.7 stops a slice rebasing a read off the end of its
-//! parent. A pin older than either ships a Windows driver without them.
+//! parent. Both crates are published as `rust-fs-ext4` (from 0.8.0) and
+//! `rust-fs-core` (from 0.3.0) now, so the floors are the first release
+//! under each new name, which carries all of it.
 //!
 //! Two places have to agree: `chores.yml`, which decides which tag of
 //! each sibling is checked out, and `Cargo.lock`, which records the
@@ -17,8 +19,8 @@ use std::path::Path;
 
 /// The first release of each crate that carries the hardening wave.
 const FLOORS: &[(&str, &str, (u64, u64, u64))] = &[
-    ("FS_CORE_REF", "am-fs-core", (0, 2, 7)),
-    ("FS_EXT4_REF", "am-fs-ext4", (0, 5, 1)),
+    ("FS_CORE_REF", "rust-fs-core", (0, 3, 0)),
+    ("FS_EXT4_REF", "rust-fs-ext4", (0, 8, 0)),
 ];
 
 fn read(name: &str) -> String {

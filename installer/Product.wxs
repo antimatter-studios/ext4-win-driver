@@ -283,7 +283,7 @@
     <!-- Icon source for the shortcuts (re-uses the EXE's embedded icon, if any). -->
     <Icon Id="ext4Icon.exe" SourceFile="$(var.ExePath)" />
     <Property Id="ARPPRODUCTICON" Value="ext4Icon.exe" />
-    <Property Id="ARPURLINFOABOUT" Value="https://github.com/christhomas/ext4-win-driver" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/antimatter-studios/ext4-win-driver" />
     <Property Id="ARPHELPLINK" Value="https://winfsp.dev/" />
 
   </Package>

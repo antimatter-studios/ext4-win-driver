@@ -33,10 +33,8 @@ runs:
       run: |
         set -euo pipefail
         pin() { sed -n "s/^  $1: *//p" chores.yml | tr -d '\r'; }
-        # URL as well as ref. The family is not all in one org --
-        # rust-fs-ext4 lives under christhomas/ while its siblings are
-        # under antimatter-studios/ -- so reconstructing a URL from
-        # the repo name silently points at a repo that does not exist.
+        # URL as well as ref: reconstructing a URL from the repo name
+        # silently points at a repo that does not exist once one moves.
         # git then prompts for credentials, and the run dies with
         # "could not read Username", which reads as an auth problem
         # rather than a wrong URL.

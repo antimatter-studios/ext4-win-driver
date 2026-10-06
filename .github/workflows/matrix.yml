@@ -135,7 +135,7 @@ jobs:
         if: inputs.installer == ''
         run: |
           set -euo pipefail
-          scripts/tier.sh build-windows -- cargo build --release --locked --features mount --target x86_64-pc-windows-gnullvm
+          bash ../rust-fs-core/scripts/tier.sh --refuse-skips build-windows -- cargo build --release --locked --features mount --target x86_64-pc-windows-gnullvm
           # fs-windows-test-harness.toml's ops run
           # {vm.workdir}/target/release/ext4.exe, and the host verifiers
           # target/release/ext4 -- the layout a native build has.
@@ -215,7 +215,7 @@ jobs:
         run: |
           set -euo pipefail
           export EXT4_PREBUILT_IMAGES="$(cygpath -u "$EXT4_PREBUILT_IMAGES")"
-          scripts/tier.sh matrix -- bash scripts/run-matrix.sh \
+          bash ../rust-fs-core/scripts/tier.sh --refuse-skips matrix -- bash scripts/run-matrix.sh \
             --vm-host=runneradmin@localhost \
             --ssh-key="$(cygpath -m ~/.ssh/ext4-matrix)" \
             --vm-workdir="$(cygpath -m "$PWD")" \
@@ -227,7 +227,7 @@ jobs:
         # (event injection, an MSI runner), which the runner reports as
         # ignored and tier.sh counts. A run that dispatched less than 35
         # cannot pass, whatever its exit status.
-        run: scripts/core.sh test-floor matrix 35
+        run: bash ../rust-fs-core/scripts/test-floor.sh matrix 35
 
       - name: upload matrix logs and diagnostics
         if: always()
