@@ -40,7 +40,7 @@ vars:
   # interactive credential prompt on a private-looking URL rather than a
   # clean 404, so it reads as an auth problem.
   FS_CORE_URL: https://github.com/antimatter-studios/rust-fs-core.git
-  FS_CORE_REF: v0.3.3
+  FS_CORE_REF: v0.3.4
   FS_EXT4_URL: https://github.com/antimatter-studios/rust-fs-ext4.git
   FS_EXT4_REF: v0.8.0
   # The matrix's ext4 images are made by rust-fs-ext4's _vm-builder.sh,
