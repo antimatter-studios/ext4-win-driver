@@ -1,0 +1,44 @@
+# tier-budgets.txt -- the measured output budget of every test tier.
+#
+# One row per tier: `TIER LINES BYTES`; `#` starts a comment. rust-fs-core's
+# scripts/tier.sh reads it when called as `tier.sh TIER -- COMMAND`, run in
+# place from ../rust-fs-core, and refuses a tier with no row rather than run
+# it unbudgeted. The numbers are this repository's; the runner is core's.
+#
+# Lines / bytes each tier may print on a PASSING run. Every number here was
+# measured, and each budget is the measurement plus roughly a third, so
+# ordinary growth fits and a change in kind (a test that starts printing, a
+# flag that turns on per-step output) does not. Raise one deliberately, with
+# the measurement that justifies it, in the same edit.
+#
+#   tier           measured (lines / bytes)                         budget
+#   check          36 / 1,828 cold, 5 / 480 warm (CI ubuntu)        48 / 2,450
+#   check-windows  239 / 12,643 cold, 157 / 9,000 warm (CI)         320 / 16,900
+#   build-windows  229 / 12,138 cold (CI windows-latest)            305 / 16,200
+#   clippy         2 / 187 (CI ubuntu and macos, cold and warm)     3 / 250
+#   test           60 / 2,960 cold (CI ubuntu and macos)            80 / 3,950
+#   matrix         494 / 29,895 green (CI windows-latest)           660 / 39,900
+#
+# Measured on GitHub's runners from the verdict lines of runs 37071187610,
+# 37071802059 and 37074571843 (2026-10-02); test and matrix from run
+# 37179235549 (2026-10-04), after the tests #31 to #36 added. The cold figures are the first
+# run after Cargo.lock changed: a line per crate compiled, plus, on Windows,
+# the driver's own warnings.
+#
+# CLIPPY RUNS AFTER CHECK in the same job, so it prints only its own crate's
+# line and cargo's `Finished`: two lines cold or warm. A third of two is not
+# a line, so the budget is the measurement plus one line; any warning fails
+# the step under -D warnings anyway.
+#
+# THE MATRIX ROW is the first green run of all 35 scenarios (run
+# 37179235549, 19 minutes after the red one whose 16 failures were Git
+# Bash rewriting ext4 paths). It is the only tier whose length depends on a
+# machine (the VM, its SSH banner, its mount timing) rather than on this
+# repository, so it is the one most likely to need raising -- with a
+# measurement.
+check            48   2450
+check-windows   320  16900
+build-windows   305  16200
+clippy            3    250
+test             80   3950
+matrix          660  39900

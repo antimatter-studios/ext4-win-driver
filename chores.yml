@@ -7,7 +7,7 @@ chore_min_version: 0.6.0
 # different mechanisms. Getting that split right is the whole point:
 #
 #   FAMILY REPOS -> siblings, checked out next to this one.
-#     am-fs-core, am-fs-ext4, winfsp-fs-skeleton, fs-windows-test-harness.
+#     rust-fs-core, rust-fs-ext4, winfsp-fs-skeleton, fs-windows-test-harness.
 #     These release together and are expected to agree on a version at
 #     any given moment. A submodule pins a copy PER CONSUMER, so the
 #     same crate ends up on disk several times at several versions with
@@ -35,16 +35,14 @@ vars:
   # The family pins. One place, read by both `chore siblings` and the
   # CI workflow -- CI parses them out of this file rather than
   # restating them, so bumping one is still a one-line edit.
-  # URL as well as ref, because the family is NOT all in one org --
-  # rust-fs-ext4 and rust-fs-ntfs live under christhomas/ while the rest
-  # are under antimatter-studios/. Anything that reconstructs a URL from
-  # the repo name gets that wrong for exactly two of them, and the
-  # failure is an interactive credential prompt on a private-looking
-  # URL rather than a clean 404, so it reads as an auth problem.
+  # URL as well as ref. The family is in one org now, but a URL rebuilt
+  # from a repo name is wrong the moment one moves, and the failure is an
+  # interactive credential prompt on a private-looking URL rather than a
+  # clean 404, so it reads as an auth problem.
   FS_CORE_URL: https://github.com/antimatter-studios/rust-fs-core.git
-  FS_CORE_REF: v0.2.19
-  FS_EXT4_URL: https://github.com/christhomas/rust-fs-ext4.git
-  FS_EXT4_REF: v0.7.0
+  FS_CORE_REF: v0.3.3
+  FS_EXT4_URL: https://github.com/antimatter-studios/rust-fs-ext4.git
+  FS_EXT4_REF: v0.8.0
   # The matrix's ext4 images are made by rust-fs-ext4's _vm-builder.sh,
   # which that repository removed at v0.6.0 (#257): v0.5.1 is the last
   # release that ships it. Pinned apart from the driver so a driver bump
@@ -168,7 +166,7 @@ tasks:
           done
         exit $rc
 
-  # THE TIERS. Each runs through scripts/tier.sh: QUIET BY DEFAULT. The
+  # THE TIERS. Each runs through ../rust-fs-core/scripts/tier.sh: QUIET BY DEFAULT. The
   # whole run goes to tmp/logs/<tier>.log and a pass prints one verdict
   # line; a passing run that printed more than the tier's measured budget
   # fails with status 65. `-- --verbose` (or OUTPUT_BUDGET_VERBOSE=1)
@@ -177,12 +175,12 @@ tasks:
   check:
     desc: Type-check the parts that build off Windows
     cmds:
-      - scripts/tier.sh check -- cargo check --locked --no-default-features
+      - bash ../rust-fs-core/scripts/tier.sh --refuse-skips check -- cargo check --locked --no-default-features
 
   test:
     desc: Run the tests that do not need Windows
     cmds:
-      - scripts/tier.sh test -- cargo test --locked --no-default-features
+      - bash ../rust-fs-core/scripts/tier.sh --refuse-skips test -- cargo test --locked --no-default-features
 
   build:host:
     desc: Build the host-side CLI the matrix's verifiers run (target/release/ext4)
@@ -212,7 +210,7 @@ tasks:
           filter="$filter $arg"
         done
         # shellcheck disable=SC2086  # the words are the point
-        scripts/tier.sh matrix -- bash scripts/run-matrix.sh $filter
+        bash ../rust-fs-core/scripts/tier.sh --refuse-skips matrix -- bash scripts/run-matrix.sh $filter
         if [ -z "$filter" ]; then
-          scripts/core.sh test-floor matrix 40
+          bash ../rust-fs-core/scripts/test-floor.sh matrix 40
         fi

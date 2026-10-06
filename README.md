@@ -24,7 +24,7 @@ Scope:
    only run one installer.
 
 The `fs-ext4` library lives at [`../rust-fs-ext4/`](../rust-fs-ext4)
-(a sibling checkout of [christhomas/rust-fs-ext4](https://github.com/christhomas/rust-fs-ext4),
+(a sibling checkout of [antimatter-studios/rust-fs-ext4](https://github.com/antimatter-studios/rust-fs-ext4),
 pinned in `chores.yml`) and is path-depended; this crate is the distribution unit.
 
 The Windows-driver scaffolding (SCM service, disk-arrival watcher,
@@ -277,8 +277,9 @@ quiet: the whole run (every SSH session, echoed PowerShell command line and
 verifier) goes to `tmp/logs/matrix.log`, and what is printed is one verdict
 line and the executed-scenario count against its floor. A run that passed
 but printed more than the tier's measured budget fails with status 65; the
-budgets are the table in `scripts/tier.sh`, and the wrapper itself is
-rust-fs-core's `scripts/output-budget.sh`, not a copy.
+budgets are the table in `scripts/tier-budgets.txt`, and the runner and
+wrapper are rust-fs-core's `scripts/tier.sh` and `scripts/output-budget.sh`,
+run in place from `../rust-fs-core`, not copies.
 
 CI runs the same matrix on every pull request, in the `matrix` job on
 `windows-latest`: the runner is its own Windows VM over SSH to `localhost`,

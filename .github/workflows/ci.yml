@@ -126,17 +126,17 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      # The family's scripts run from rust-fs-core (scripts/core.sh), and
-      # this repository keeps no copy of them.
-      - run: scripts/core.sh family-check
+      # The family's scripts run in place from rust-fs-core, and this
+      # repository keeps no copy of them.
+      - run: bash ../rust-fs-core/scripts/family-check.sh
 
-      # EACH STEP IS A QUIET TIER: scripts/tier.sh writes the whole run to
+      # EACH STEP IS A QUIET TIER: ../rust-fs-core/scripts/tier.sh writes the whole run to
       # tmp/logs/<tier>.log, prints one verdict line, and fails a passing
       # run that printed more than its measured budget (exit 65). The logs
       # are uploaded below, pass or fail.
-      - run: scripts/tier.sh check -- cargo check --locked --no-default-features
-      - run: scripts/tier.sh clippy -- cargo clippy --locked --no-default-features --all-targets -- -D warnings
-      - run: scripts/tier.sh test -- cargo test --locked --no-default-features
+      - run: bash ../rust-fs-core/scripts/tier.sh --refuse-skips check -- cargo check --locked --no-default-features
+      - run: bash ../rust-fs-core/scripts/tier.sh --refuse-skips clippy -- cargo clippy --locked --no-default-features --all-targets -- -D warnings
+      - run: bash ../rust-fs-core/scripts/tier.sh --refuse-skips test -- cargo test --locked --no-default-features
 
       - name: upload tier logs
         if: always()
@@ -173,7 +173,7 @@ jobs:
 
       - name: cargo check --features mount,service
         shell: bash
-        run: scripts/tier.sh check-windows -- cargo check --locked --features mount,service --target x86_64-pc-windows-gnullvm
+        run: bash ../rust-fs-core/scripts/tier.sh --refuse-skips check-windows -- cargo check --locked --features mount,service --target x86_64-pc-windows-gnullvm
 
       - name: upload tier logs
         if: always()
