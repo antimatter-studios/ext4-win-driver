@@ -16,7 +16,7 @@
 #   check-windows  239 / 12,643 cold, 157 / 9,000 warm (CI)         320 / 16,900
 #   build-windows  229 / 12,138 cold (CI windows-latest)            305 / 16,200
 #   clippy         2 / 187 (CI ubuntu and macos, cold and warm)     3 / 250
-#   test           60 / 2,960 cold (CI ubuntu and macos)            80 / 3,950
+#   test           104 / 4,950 cold (CI macos, run 37480343568)     139 / 6,600
 #   matrix         494 / 29,895 green (CI windows-latest)           660 / 39,900
 #
 # Measured on GitHub's runners from the verdict lines of runs 37071187610,
@@ -42,7 +42,9 @@ build-windows   305  16200
 # THE CHECK ROW MOVED ON 2026-10-06, from 48 / 2,450: the move to
 # rust-fs-ext4 0.8 and rust-fs-core 0.3 changed Cargo.lock, which misses the
 # build cache, and the cold check printed 69 / 3,258 on ubuntu and
-# 77 / 3,598 on macOS (run 37479572141). The larger plus a third.
+# 77 / 3,598 on macOS (run 37479572141). The larger plus a third. THE TEST
+# ROW MOVED WITH IT, from 80 / 3,950: cold, 100 / 4,778 on ubuntu and
+# 104 / 4,950 on macOS (run 37480343568), plus a third.
 clippy            3    250
-test             80   3950
+test            139   6600
 matrix          660  39900
