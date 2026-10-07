@@ -2,11 +2,12 @@
 name = "ext4-win-driver"
 version = "0.2.2"
 edition = "2021"
-# GPL-3.0 because the WinFsp Rust bindings (`winfsp` crate) are GPL-3.0.
+# GPL-3.0-or-later because the WinFsp Rust bindings (`winfsp` crate) are GPL-3.0.
 # The CLI alone (without the `mount` feature) does not link winfsp and
 # could be relicensed if ever split out, but to keep the distribution
-# unit single-licensed we declare GPL-3.0 here.
-license = "GPL-3.0"
+# unit single-licensed we declare GPL-3.0-or-later here, as every
+# Windows driver in the family does.
+license = "GPL-3.0-or-later"
 description = "Browse and mount ext4 filesystems on Windows (CLI + WinFsp driver)"
 
 [[bin]]

@@ -8,7 +8,7 @@ PublisherSupportUrl: https://github.com/antimatter-studios/ext4-win-driver/issue
 Author: Chris Thomas
 PackageName: ext4-win-driver
 PackageUrl: https://github.com/antimatter-studios/ext4-win-driver
-License: GPL-3.0-only
+License: GPL-3.0-or-later
 LicenseUrl: https://www.gnu.org/licenses/gpl-3.0.html
 Copyright: Copyright (c) Chris Thomas / Antimatter Studios
 CopyrightUrl: https://github.com/antimatter-studios/ext4-win-driver/blob/main/LICENSE
