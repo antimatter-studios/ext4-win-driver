@@ -13,6 +13,7 @@ notes are that section (rust-fs-core's `release-notes`).
 
 ### Fixed
 
+- **A directory entry that cannot be stat'ed fails the listing rather than vanishing.** A directory whose children could not be read listed to Windows as short, or empty, with no error; the listing now fails with the entry's error. A symlink whose target does not resolve is still left out.
 - Self-healing test-mount/test-unmount.
 - Mode format order, data.len() u64 cast, clippy fixes.
 - MacOS fallback for open_rw.

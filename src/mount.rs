@@ -327,6 +327,149 @@ extern "C" fn slice_flush_cb(ctx: *mut c_void) -> c_int {
 // WinFsp adapter (feature = "mount", windows only)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Stat and directory listing through the C ABI. Outside the WinFsp adapter
+// so they are tested on every host; the adapter calls them, and nothing
+// else does yet, hence the dead-code allows off Windows.
+// ---------------------------------------------------------------------------
+
+/// `ENOENT`, as the C ABI reports it.
+#[cfg_attr(not(all(windows, feature = "mount")), allow(dead_code))]
+pub(crate) const ENOENT: c_int = 2;
+
+/// How many symlinks [`stat_resolved`] follows before it gives up.
+#[cfg_attr(not(all(windows, feature = "mount")), allow(dead_code))]
+const MAX_SYMLINK_HOPS: usize = 8;
+
+/// Stat `unix_path` through the C ABI, following symlinks up to 8 levels
+/// deep. Returns the resolved path and its attributes.
+///
+/// # Errors
+///
+/// The errno the C ABI reports, or `ENOENT` for a symlink whose target
+/// cannot be read or does not resolve within 8 levels.
+#[cfg_attr(not(all(windows, feature = "mount")), allow(dead_code))]
+pub(crate) fn stat_resolved(
+    fs: *mut fs_ext4_fs_t,
+    unix_path: &str,
+) -> std::result::Result<(String, fs_ext4_attr_t), c_int> {
+    let mut current = unix_path.to_owned();
+    for _ in 0..MAX_SYMLINK_HOPS {
+        let cp = CString::new(current.as_str()).map_err(|_| ENOENT)?;
+        let mut attr: fs_ext4_attr_t = unsafe { std::mem::zeroed() };
+        let r = unsafe { fs_ext4_stat(fs, cp.as_ptr(), &mut attr) };
+        if r != 0 {
+            return Err(fs_ext4_last_errno());
+        }
+        if !matches!(attr.file_type, fs_ext4_file_type_t::Symlink) {
+            return Ok((current, attr));
+        }
+        // Symlink: read target (null-terminated); resolve relative to link's parent.
+        let mut buf = vec![0u8; 4096];
+        let r = unsafe { fs_ext4_readlink(fs, cp.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) };
+        if r < 0 {
+            return Err(ENOENT);
+        }
+        let target = std::str::from_utf8(&buf[..r as usize])
+            .unwrap_or("")
+            .to_owned();
+        if target.starts_with('/') {
+            current = target;
+        } else {
+            let parent = current.rfind('/').map(|i| &current[..i]).unwrap_or("/");
+            current = format!("{}/{}", parent.trim_end_matches('/'), target);
+        }
+    }
+    Err(ENOENT)
+}
+
+/// A C ABI directory iterator, closed when dropped so every way out of
+/// [`walk_dir`] closes it.
+#[cfg_attr(not(all(windows, feature = "mount")), allow(dead_code))]
+struct DirIter(*mut fs_ext4_dir_iter_t);
+
+impl Drop for DirIter {
+    fn drop(&mut self) {
+        unsafe { fs_ext4_dir_close(self.0) };
+    }
+}
+
+/// The path the entry `name` of the directory at `parent_path` names:
+/// `.` is the directory itself and `..` its parent.
+#[cfg_attr(not(all(windows, feature = "mount")), allow(dead_code))]
+fn entry_path(parent_path: &str, name: &str) -> String {
+    match name {
+        "." => parent_path.to_owned(),
+        ".." => match parent_path.rfind('/') {
+            Some(idx) if idx > 0 => parent_path[..idx].to_owned(),
+            _ => "/".to_owned(),
+        },
+        _ if parent_path == "/" => format!("/{name}"),
+        _ => format!("{parent_path}/{name}"),
+    }
+}
+
+/// List the directory at `parent_path` the way the WinFsp
+/// `read_directory` callback does: every entry in on-disk order with its
+/// attributes (a symlink's are its target's), `.` and `..` included, and
+/// names that are not UTF-8 left out.
+///
+/// Entries up to and including `resume_after` are passed over, which is
+/// how WinFsp resumes a listing. `emit` is handed each entry after that,
+/// and returns `false` to stop when its buffer is full.
+///
+/// A symlink whose target does not resolve is left out, as it always
+/// was: `stat_resolved` reports it as `ENOENT`.
+///
+/// # Errors
+///
+/// The errno of a directory that cannot be opened, or of an entry that
+/// cannot be stat'ed for any other reason. Leaving such an entry out
+/// would show Windows a short or an empty folder, and a user cannot tell
+/// that from a correct one: it looks like the files are gone.
+#[cfg_attr(not(all(windows, feature = "mount")), allow(dead_code))]
+pub(crate) fn walk_dir(
+    fs: *mut fs_ext4_fs_t,
+    parent_path: &str,
+    resume_after: Option<&str>,
+    mut emit: impl FnMut(&str, &fs_ext4_attr_t) -> bool,
+) -> std::result::Result<(), c_int> {
+    let cp = CString::new(parent_path).map_err(|_| ENOENT)?;
+    let iter = unsafe { fs_ext4_dir_open(fs, cp.as_ptr()) };
+    if iter.is_null() {
+        return Err(fs_ext4_last_errno());
+    }
+    let iter = DirIter(iter);
+    let mut started = resume_after.is_none();
+    loop {
+        let e = unsafe { fs_ext4_dir_next(iter.0) };
+        if e.is_null() {
+            break;
+        }
+        let entry = unsafe { &*e };
+        let name_bytes: Vec<u8> = entry.name[..entry.name_len as usize]
+            .iter()
+            .map(|b| *b as u8)
+            .collect();
+        let Ok(name) = std::str::from_utf8(&name_bytes) else {
+            continue;
+        };
+        if !started {
+            started = Some(name) == resume_after;
+            continue;
+        }
+        let attr = match stat_resolved(fs, &entry_path(parent_path, name)) {
+            Ok((_, attr)) => attr,
+            Err(ENOENT) => continue,
+            Err(errno) => return Err(errno),
+        };
+        if !emit(name, &attr) {
+            break;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(all(windows, feature = "mount"))]
 mod winfsp_adapter {
     //! Glue between WinFsp's `FileSystemContext` and the `fs_ext4_*` C ABI.
@@ -527,42 +670,14 @@ mod winfsp_adapter {
     }
 
     /// Stat a path through the C ABI. Returns the resolved path and populated
-    /// `attr`, following symlinks up to 8 levels deep.
+    /// `attr`, following symlinks up to 8 levels deep. The walk itself is
+    /// [`crate::mount::stat_resolved`], outside this module so it is tested
+    /// on every host.
     fn stat_path_resolved(
         fs: *mut fs_ext4_fs_t,
         unix_path: &str,
     ) -> FspResult<(String, fs_ext4_attr_t)> {
-        let mut current = unix_path.to_owned();
-        for _ in 0..8 {
-            let cp = CString::new(current.as_str())
-                .map_err(|_| windows::core::Error::from(STATUS_OBJECT_NAME_NOT_FOUND))?;
-            let mut attr: fs_ext4_attr_t = unsafe { std::mem::zeroed() };
-            let r = unsafe { fs_ext4_stat(fs, cp.as_ptr(), &mut attr) };
-            if r != 0 {
-                let errno = unsafe { fs_ext4_last_errno() };
-                return Err(errno_to_status(errno).into());
-            }
-            if !matches!(attr.file_type, fs_ext4_file_type_t::Symlink) {
-                return Ok((current, attr));
-            }
-            // Symlink: read target (null-terminated); resolve relative to link's parent.
-            let mut buf = vec![0u8; 4096];
-            let r =
-                unsafe { fs_ext4_readlink(fs, cp.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) };
-            if r < 0 {
-                return Err(STATUS_OBJECT_NAME_NOT_FOUND.into());
-            }
-            let target = std::str::from_utf8(&buf[..r as usize])
-                .unwrap_or("")
-                .to_owned();
-            if target.starts_with('/') {
-                current = target;
-            } else {
-                let parent = current.rfind('/').map(|i| &current[..i]).unwrap_or("/");
-                current = format!("{}/{}", parent.trim_end_matches('/'), target);
-            }
-        }
-        Err(STATUS_OBJECT_NAME_NOT_FOUND.into())
+        crate::mount::stat_resolved(fs, unix_path).map_err(|errno| errno_to_status(errno).into())
     }
 
     /// Stat a path through the C ABI. Returns the populated `attr` or a
@@ -803,100 +918,25 @@ mod winfsp_adapter {
             if !context.is_dir {
                 return Err(STATUS_NOT_A_DIRECTORY.into());
             }
-            let parent_path = context.unix_path();
-            let cp = CString::new(parent_path.clone())
-                .map_err(|_| windows::core::Error::from(STATUS_OBJECT_NAME_NOT_FOUND))?;
-            let iter = unsafe { fs_ext4_dir_open(self.mount.fs, cp.as_ptr()) };
-            if iter.is_null() {
-                let errno = unsafe { fs_ext4_last_errno() };
-                return Err(errno_to_status(errno).into());
-            }
-
-            // Resume after `marker` if set. We pass through every entry
-            // until we've matched the marker name (exclusive), then start
-            // emitting.
+            // Resume after `marker` if set: `walk_dir` passes over every
+            // entry up to and including it.
             let resume_after = marker.inner_as_cstr().map(|m| m.to_string_lossy());
-            let mut started = resume_after.is_none();
-
             let mut cursor: u32 = 0;
             let mut dir_info: DirInfo<255> = DirInfo::new();
-
-            loop {
-                let e = unsafe { fs_ext4_dir_next(iter) };
-                if e.is_null() {
-                    break;
-                }
-                let entry = unsafe { &*e };
-                let name_bytes: Vec<u8> = entry.name[..entry.name_len as usize]
-                    .iter()
-                    .map(|b| *b as u8)
-                    .collect();
-                let name = match std::str::from_utf8(&name_bytes) {
-                    Ok(s) => s,
-                    Err(_) => continue,
-                };
-                if name == "." || name == ".." {
-                    if !started {
-                        if Some(name.to_string()) == resume_after.as_ref().map(|s| s.to_string()) {
-                            started = true;
-                        }
-                        continue;
-                    }
-                    // Stat the correct path: "." → parent_path, ".." → parent of parent_path.
-                    let dot_path = if name == "." {
-                        parent_path.clone()
-                    } else if parent_path == "/" {
-                        "/".to_string()
-                    } else {
-                        let idx = parent_path.rfind('/').unwrap_or(0);
-                        if idx == 0 {
-                            "/".to_string()
-                        } else {
-                            parent_path[..idx].to_string()
-                        }
-                    };
-                    let attr = match stat_path(self.mount.fs, &dot_path) {
-                        Ok(a) => a,
-                        Err(_) => continue,
-                    };
+            crate::mount::walk_dir(
+                self.mount.fs,
+                &context.unix_path(),
+                resume_after.as_deref(),
+                |name, attr| {
                     dir_info.reset();
-                    populate_file_info(&attr, dir_info.file_info_mut());
+                    populate_file_info(attr, dir_info.file_info_mut());
                     if dir_info.set_name(name).is_err() {
-                        continue;
+                        return true;
                     }
-                    if !dir_info.append_to_buffer(buffer, &mut cursor) {
-                        break;
-                    }
-                    continue;
-                }
-
-                if !started {
-                    if Some(name.to_string()) == resume_after.as_ref().map(|s| s.to_string()) {
-                        started = true;
-                    }
-                    continue;
-                }
-
-                let child_path = if parent_path == "/" {
-                    format!("/{name}")
-                } else {
-                    format!("{}/{name}", parent_path)
-                };
-                let attr = match stat_path(self.mount.fs, &child_path) {
-                    Ok(a) => a,
-                    Err(_) => continue, // skip entries we can't stat
-                };
-
-                dir_info.reset();
-                populate_file_info(&attr, dir_info.file_info_mut());
-                if dir_info.set_name(name).is_err() {
-                    continue;
-                }
-                if !dir_info.append_to_buffer(buffer, &mut cursor) {
-                    break;
-                }
-            }
-            unsafe { fs_ext4_dir_close(iter) };
+                    dir_info.append_to_buffer(buffer, &mut cursor)
+                },
+            )
+            .map_err(errno_to_status)?;
             DirInfo::<255>::finalize_buffer(buffer, &mut cursor);
             Ok(cursor)
         }
@@ -1613,5 +1653,223 @@ mod tests {
         let rw_passes = rw.writable;
         assert!(ro_blocks, "ensure_writable() must block on RO mount");
         assert!(rw_passes, "ensure_writable() must pass on RW mount");
+    }
+}
+
+#[cfg(test)]
+mod listing_tests {
+    //! A directory entry that cannot be stat'ed fails the listing rather
+    //! than vanishing from it.
+    //!
+    //! The WinFsp `read_directory` callback skipped any entry whose stat
+    //! failed, so a directory whose children could not be read listed to
+    //! Windows as short, or empty, with no error. These list a volume,
+    //! made through the C ABI, through a device that starts failing on
+    //! demand, so the failure is a real read error from the real read
+    //! path.
+
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+
+    /// How many files `/manyentries` holds: enough that their inodes
+    /// span several inode-table blocks.
+    const ENTRIES: usize = 200;
+
+    /// The volume's size.
+    const SIZE: usize = 16 << 20;
+
+    /// A disk in memory. Once `fail_all` is set every read fails, as the
+    /// device's would.
+    struct MemDisk {
+        bytes: Mutex<Vec<u8>>,
+        fail_all: AtomicBool,
+    }
+
+    unsafe extern "C" fn mem_read(
+        ctx: *mut c_void,
+        buf: *mut c_void,
+        offset: u64,
+        length: u64,
+    ) -> c_int {
+        let disk = unsafe { &*(ctx as *const MemDisk) };
+        if disk.fail_all.load(Ordering::SeqCst) {
+            return -1;
+        }
+        let bytes = disk.bytes.lock().unwrap();
+        let (start, end) = (offset as usize, (offset + length) as usize);
+        if end > bytes.len() {
+            return -1;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes[start..end].as_ptr(), buf.cast(), end - start)
+        };
+        0
+    }
+
+    unsafe extern "C" fn mem_write(
+        ctx: *mut c_void,
+        buf: *const c_void,
+        offset: u64,
+        length: u64,
+    ) -> c_int {
+        let disk = unsafe { &*(ctx as *const MemDisk) };
+        let mut bytes = disk.bytes.lock().unwrap();
+        let (start, end) = (offset as usize, (offset + length) as usize);
+        if end > bytes.len() {
+            return -1;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(buf.cast(), bytes[start..end].as_mut_ptr(), end - start)
+        };
+        0
+    }
+
+    unsafe extern "C" fn mem_flush(_ctx: *mut c_void) -> c_int {
+        0
+    }
+
+    impl MemDisk {
+        fn cfg(&self) -> fs_ext4_blockdev_cfg_t {
+            fs_ext4_blockdev_cfg_t {
+                read: Some(mem_read),
+                context: self as *const MemDisk as *mut c_void,
+                size_bytes: SIZE as u64,
+                block_size: 0,
+                write: Some(mem_write),
+                flush: Some(mem_flush),
+            }
+        }
+    }
+
+    fn c(path: &str) -> CString {
+        CString::new(path).unwrap()
+    }
+
+    /// A volume holding `/manyentries` with `ENTRIES` empty files and a
+    /// symlink whose target does not exist, mounted read-only. The disk
+    /// is boxed so the pointer the C ABI holds stays put; it must outlive
+    /// the mount, so it is returned first and dropped last.
+    fn volume() -> (Box<MemDisk>, Mount) {
+        let disk = Box::new(MemDisk {
+            bytes: Mutex::new(vec![0; SIZE]),
+            fail_all: AtomicBool::new(false),
+        });
+        let cfg = disk.cfg();
+        let rc = unsafe { fs_ext4_mkfs(&cfg, std::ptr::null(), std::ptr::null()) };
+        assert_eq!(rc, 0, "mkfs: {}", crate::cmd::last_err());
+
+        let fs = unsafe { fs_ext4_mount_rw_with_callbacks(&cfg) };
+        assert!(!fs.is_null(), "mount rw: {}", crate::cmd::last_err());
+        let rw = Mount {
+            fs,
+            cb_ctx: None,
+            writable: true,
+        };
+        let dir = c("/manyentries");
+        assert_ne!(
+            unsafe { fs_ext4_mkdir(rw.fs, dir.as_ptr(), 0o755) },
+            0,
+            "mkdir: {}",
+            crate::cmd::last_err()
+        );
+        for i in 1..=ENTRIES {
+            let p = c(&format!("/manyentries/entry-{i}.txt"));
+            assert_ne!(
+                unsafe { fs_ext4_create(rw.fs, p.as_ptr(), 0o644) },
+                0,
+                "create entry-{i}.txt: {}",
+                crate::cmd::last_err()
+            );
+        }
+        let (target, link) = (c("/nowhere-at-all"), c("/manyentries/dangling-link"));
+        assert_ne!(
+            unsafe { fs_ext4_symlink(rw.fs, target.as_ptr(), link.as_ptr()) },
+            0,
+            "symlink: {}",
+            crate::cmd::last_err()
+        );
+        drop(rw);
+
+        let fs = unsafe { fs_ext4_mount_with_callbacks(&cfg) };
+        assert!(!fs.is_null(), "mount ro: {}", crate::cmd::last_err());
+        let ro = Mount {
+            fs,
+            cb_ctx: None,
+            writable: false,
+        };
+        (disk, ro)
+    }
+
+    /// Every name `walk_dir` hands `emit` for `/manyentries`, resuming
+    /// after `resume_after`, with `emit` saying stop once it holds `cap`.
+    fn list(
+        mount: &Mount,
+        resume_after: Option<&str>,
+        cap: usize,
+    ) -> (Vec<String>, std::result::Result<(), c_int>) {
+        let mut names = Vec::new();
+        let got = walk_dir(mount.fs, "/manyentries", resume_after, |name, _| {
+            names.push(name.to_owned());
+            names.len() < cap
+        });
+        (names, got)
+    }
+
+    /// With nothing failing, every entry is listed, `.` and `..`
+    /// included, and the dangling symlink is left out as it always was.
+    #[test]
+    fn a_readable_directory_lists_every_entry() {
+        let (_disk, mount) = volume();
+        let (names, got) = list(&mount, None, usize::MAX);
+        assert_eq!(got, Ok(()));
+        assert_eq!(names.len(), ENTRIES + 2, "every file, and . and ..");
+        assert!(names.iter().any(|n| n == "."));
+        assert!(names.iter().any(|n| n == ".."));
+        assert!(
+            !names.iter().any(|n| n == "dangling-link"),
+            "a symlink whose target does not resolve is left out"
+        );
+    }
+
+    /// A listing resumes after the marker WinFsp hands back, and stops
+    /// when `emit` says the buffer is full.
+    #[test]
+    fn a_listing_resumes_after_the_marker_and_stops_when_full() {
+        let (_disk, mount) = volume();
+        let (all, _) = list(&mount, None, usize::MAX);
+        let (rest, got) = list(&mount, Some(&all[9]), usize::MAX);
+        assert_eq!(got, Ok(()));
+        assert_eq!(rest, all[10..], "everything after the marker");
+        let (first, got) = list(&mount, None, 3);
+        assert_eq!(got, Ok(()));
+        assert_eq!(first, all[..3], "stopped once the buffer was full");
+    }
+
+    /// An entry that cannot be stat'ed fails the listing rather than
+    /// vanishing from it.
+    #[test]
+    fn an_entry_that_cannot_be_stated_fails_the_listing_rather_than_vanishing() {
+        let (disk, mount) = volume();
+        let mut names = Vec::new();
+        // The directory is open and read by the time the first entry is
+        // handed over; from then on the device fails every read.
+        let got = walk_dir(mount.fs, "/manyentries", None, |name, _| {
+            names.push(name.to_owned());
+            disk.fail_all.store(true, Ordering::SeqCst);
+            true
+        });
+        disk.fail_all.store(false, Ordering::SeqCst);
+        match got {
+            Ok(()) => panic!(
+                "entries that could not be stat'ed were dropped: {} of {} listed, no error",
+                names.len(),
+                ENTRIES + 2
+            ),
+            Err(errno) => assert_ne!(
+                errno, ENOENT,
+                "a read failure must not look like a missing entry, which is left out"
+            ),
+        }
     }
 }
