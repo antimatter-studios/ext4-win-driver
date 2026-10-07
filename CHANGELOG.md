@@ -7,6 +7,14 @@ notes are that section (rust-fs-core's `release-notes`).
 
 ## [Unreleased]
 
+### Changed
+
+- **The licence is GPL-3.0-or-later**, as for every Windows driver in the
+  family and winfsp-fs-skeleton. `Cargo.toml` declared GPL-3.0 only; it,
+  the README and the winget manifest now say GPL-3.0-or-later. The licence
+  text in LICENSE is unchanged.
+
+
 ### Added
 
 - Scheduled-task drive-letter mount via InteractiveToken.

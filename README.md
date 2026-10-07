@@ -310,6 +310,6 @@ is the whole bump: CI picks the new ref up from the same file.
 
 ## License
 
-GPL-3.0 -- inherited from the WinFsp Rust bindings. The CLI alone (without
+GPL-3.0-or-later -- inherited from the WinFsp Rust bindings. The CLI alone (without
 the `mount` feature) doesn't link winfsp and could be relicensed if split
 out, but the single-license declaration keeps the distribution unit simple.
