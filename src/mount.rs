@@ -418,9 +418,15 @@ fn entry_path(parent_path: &str, name: &str) -> String {
 /// how WinFsp resumes a listing. `emit` is handed each entry after that,
 /// and returns `false` to stop when its buffer is full.
 ///
+/// A symlink whose target does not resolve is left out, as it always
+/// was: `stat_resolved` reports it as `ENOENT`.
+///
 /// # Errors
 ///
-/// The errno of a directory that cannot be opened.
+/// The errno of a directory that cannot be opened, or of an entry that
+/// cannot be stat'ed for any other reason. Leaving such an entry out
+/// would show Windows a short or an empty folder, and a user cannot tell
+/// that from a correct one: it looks like the files are gone.
 #[cfg_attr(not(all(windows, feature = "mount")), allow(dead_code))]
 pub(crate) fn walk_dir(
     fs: *mut fs_ext4_fs_t,
@@ -454,7 +460,8 @@ pub(crate) fn walk_dir(
         }
         let attr = match stat_resolved(fs, &entry_path(parent_path, name)) {
             Ok((_, attr)) => attr,
-            Err(_) => continue, // skip entries we can't stat
+            Err(ENOENT) => continue,
+            Err(errno) => return Err(errno),
         };
         if !emit(name, &attr) {
             break;
