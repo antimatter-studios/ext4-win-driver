@@ -89,7 +89,9 @@ runs:
 
     - name: install WinFsp (build-time headers + libs)
       shell: pwsh
-      run: choco install winfsp --yes --no-progress
+      # A bare `choco install` passes having installed nothing when the feed
+      # fails; the script retries and then checks the headers are there (#49).
+      run: ./scripts/install-winfsp.ps1
 
     - name: patch fsctl.h for the _ReadWriteBarrier collision
       shell: pwsh

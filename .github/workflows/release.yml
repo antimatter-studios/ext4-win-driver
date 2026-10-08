@@ -133,7 +133,8 @@ jobs:
       - name: install WinFsp (build-time headers + libs)
         shell: pwsh
         run: |
-          choco install winfsp --yes --no-progress
+          # Retries a feed error and fails unless the headers are there (#49).
+          ./scripts/install-winfsp.ps1
           # WinFsp installs to "C:\Program Files (x86)\WinFsp\" on x64
           # hosts and to "C:\Program Files\WinFsp\" on arm64; winfsp-rs
           # auto-discovers via the registry.
