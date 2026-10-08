@@ -109,7 +109,7 @@ jobs:
             Darwin-x86_64)  asset="chore-0.9.0-darwin-x86_64.tar.gz" ;;
             *) echo "no chore build for $(uname -s)-$(uname -m)" >&2; exit 1 ;;
           esac
-          curl -fsSL "https://github.com/antimatter-studios/chore/releases/download/v0.9.0/$asset" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "https://github.com/antimatter-studios/chore/releases/download/v0.9.0/$asset" \
             | sudo tar xz -C /usr/local/bin chore
           chore siblings
 
