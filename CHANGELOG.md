@@ -21,6 +21,7 @@ notes are that section (rust-fs-core's `release-notes`).
 
 ### Fixed
 
+- **The WinFsp install fails its own step when nothing was installed.** `choco install winfsp` passes having installed nothing when the Chocolatey feed cannot serve the package, and the build then failed later in winfsp-sys; `scripts/install-winfsp.ps1` retries four times and fails unless WinFsp's headers are on disk (#49).
 - **A directory entry that cannot be stat'ed fails the listing rather than vanishing.** A directory whose children could not be read listed to Windows as short, or empty, with no error; the listing now fails with the entry's error. A symlink whose target does not resolve is still left out.
 - **A transient HTTP 5xx from the chore release download no longer fails a CI job.** Every chore download in the workflows retries up to five times on any error.
 - Self-healing test-mount/test-unmount.
