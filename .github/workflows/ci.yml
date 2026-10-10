@@ -26,6 +26,10 @@ on:
   # `branches: [main]` a PR stacked on another branch got no run at all,
   # and a PR with no checks has no failing checks.
   pull_request:
+  # The merge queue's run: main plus the queued pull requests, the run that
+  # decides whether they land. The queue reads ci-ok only from a workflow
+  # that triggers here.
+  merge_group:
   # The full Windows matrix also runs weekly against main, so a change in
   # the runner image, WinFsp or the pinned siblings shows up without a
   # pull request to provoke it, and on demand.
@@ -44,6 +48,64 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Does this change need the full pipeline? rust-fs-core's
+  # scripts/code-changed.sh reads the change's paths and says false only when
+  # every one is documentation. The change is the pull request's diff, the
+  # merge queue group's (its base_sha to its head_sha: what the queue is about
+  # to land), or a push to main's (before to after); a push it cannot diff
+  # runs everything. The expensive jobs run
+  # only when the answer is true, and ci-ok accepts their skip when, and only
+  # when, it is false.
+  changes:
+    name: changes (does this need the full pipeline?)
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.c.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: rust-fs-core at the pinned tag, for code-changed.sh
+        uses: actions/checkout@v4
+        with:
+          repository: antimatter-studios/rust-fs-core
+          ref: v0.3.8
+          path: rust-fs-core
+      - name: Classify the change
+        id: c
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          MQ_BASE: ${{ github.event.merge_group.base_sha }}
+          MQ_HEAD: ${{ github.event.merge_group.head_sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.event.after }}
+        run: |
+          set -euo pipefail
+          range=
+          case "$EVENT" in
+            pull_request) range="$PR_BASE...$PR_HEAD" ;;
+            merge_group) range="$MQ_BASE...$MQ_HEAD" ;;
+            push)
+              case "$REF" in
+                refs/heads/*)
+                  if [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != 0000000000000000000000000000000000000000 ] &&
+                    git cat-file -e "$PUSH_BEFORE^{commit}" 2>/dev/null; then
+                    range="$PUSH_BEFORE...$PUSH_AFTER"
+                  fi ;;
+              esac ;;
+          esac
+          if [ -n "$range" ]; then
+            git diff --name-only "$range" | tee changed.txt
+            code="$(bash rust-fs-core/scripts/code-changed.sh < changed.txt)"
+          else
+            code=true
+          fi
+          echo "code=$code ($EVENT${range:+ $range})"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
   # The harness's runner accepts unknown scenario keys, so a matrix its
   # schema rejects still runs, and nothing here noticed when it did. This
   # holds fs-windows-test-harness.toml and test-matrix.json to the harness's
@@ -150,6 +212,8 @@ jobs:
   # worth its runtime.
   windows:
     name: check (windows, mount + service)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     env:
       LLVM_MINGW_VER: 20260421
@@ -188,4 +252,32 @@ jobs:
   # development build of this commit.
   matrix:
     name: matrix
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     uses: ./.github/workflows/matrix.yml
+
+  # THE ONE REQUIRED CHECK. Branch protection names this job instead of each
+  # job above, so a job can be added, renamed or split without leaving a
+  # required check that never reports. It accepts a skipped job only when
+  # the change was documentation alone.
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [changes, matrix-schema, portable, windows, matrix]
+    runs-on: ubuntu-latest
+    steps:
+      - name: every gating job must have concluded success
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          # false only for a change to documentation alone: then, and only
+          # then, a skipped job is not a failed one.
+          CODE: ${{ needs.changes.outputs.code }}
+        run: |
+          set -euo pipefail
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "code changed: $CODE"
+          bad="$(echo "$NEEDS" | jq -r --arg code "$CODE" '[to_entries[] | select(.value.result != "success" and ($code != "false" or .value.result != "skipped")) | .key] | join(", ")')"
+          if [ -n "$bad" ]; then
+            echo "::error::not 'success': $bad -- failure, cancellation and skipping all mean the gate did not run to completion"
+            exit 1
+          fi
