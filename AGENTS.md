@@ -16,7 +16,7 @@ canonical copy in rust-fs-core and propagate it, or rust-fs-core's
 `scripts/agents-core-check.sh` will fail. Everything after the END marker is
 specific to this repository.
 
-<!-- BEGIN SHARED BLOCK: agent-core v5 sha256:93dca03d900fede9964388123030f779939bc99b8b9943f092051be6c9134126 -->
+<!-- BEGIN SHARED BLOCK: agent-core v6 sha256:a2e65c36beb8403a1bfe5713518e3bb14b48d1304e95588326ff202bd82b9e9f -->
 ## Claiming work
 
 Several agents work these repositories at the same time. Before you start on
@@ -60,6 +60,15 @@ add your own, and say so in the issue.
 
 **This is a convention, not a fence.** Nothing enforces it. An agent that
 ignores it duplicates work; it cannot corrupt anything. Honour it anyway.
+
+## Findings become issues before a tracking issue closes
+
+A review, an investigation, or the work under an umbrella issue turns up
+things beyond what it set out to do. File each finding as its own issue --
+what was seen, where, and what would show it fixed -- and cite it in the
+tracking issue **before** that issue closes. A finding left in a comment, a
+pull request description or a transcript is lost when the issue that held
+it closes; an open issue is where the next agent looks.
 
 ## Work in a worktree
 
@@ -174,6 +183,38 @@ it**. Do not silence output to fit, and do not route around `tier.sh`.
   merge: never update a branch only so that it can merge. Every workflow
   that gates `main` triggers on `merge_group`, or the queue never sees its
   result and nothing merges.
+- **A pull request that would conflict with an older open one is stacked
+  on it.** Before opening a pull request, and again whenever its base
+  merges, ask `../rust-fs-core/scripts/stack-base.sh` (run in place; in
+  rust-fs-core itself, `scripts/stack-base.sh`). It prints `main`, or the
+  branch of the newest older open pull request this branch would conflict
+  with or is already built on: base the pull request there (`gh pr create
+  --base`, `gh pr edit --base`). Overlap means a conflict, found by a trial
+  merge, not a shared file: pull requests that change one file in different
+  places merge in any order and stay on `main`. Asking the script rather
+  than judging means two agents never stack the same pair both ways. When
+  the base merges, GitHub retargets the pull request at the base's own
+  base; ask again, and rebase onto the answer with `git rebase --onto <new
+  base> <old base>`, since a squash merge leaves the old base's commits out
+  of `main`. A stacked pull request joins the merge queue once it is based
+  on `main`.
+
+## Changelog entries are fragments
+
+A pull request never edits `CHANGELOG.md`. It adds one file under
+`changelog.d/`, named for its branch (`fix/run-end-bound` writes
+`changelog.d/fix-run-end-bound.md`), holding one or more `### Added`,
+`### Changed`, `### Fixed` (or any other) headings, each over `- ` entries.
+Pull requests open at the same time then never conflict over the top of one
+file. A change no consumer would notice -- tests, CI, documentation -- adds
+no fragment.
+
+A release gathers them: `../rust-fs-core/scripts/changelog-gather.sh
+VERSION` writes every fragment into a dated `## [VERSION]` section of
+`CHANGELOG.md` and deletes the fragments, in the release commit. An entry is
+a fragment until it ships and a line of `CHANGELOG.md` after, never both.
+`chore lint` runs `changelog-check.sh`: every fragment is well formed, and
+`CHANGELOG.md` holds no unreleased entries of its own.
 
 ## Project rules
 
@@ -182,7 +223,7 @@ it**. Do not silence output to fit, and do not route around `tier.sh`.
   copying it is not.
 - **Each of these is a standalone project.** Never mention a consuming
   application in the README, the source, or CLI help.
-<!-- END SHARED BLOCK: agent-core v5 -->
+<!-- END SHARED BLOCK: agent-core v6 -->
 
 ## This repository
 

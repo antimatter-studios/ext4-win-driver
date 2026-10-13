@@ -69,8 +69,16 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: antimatter-studios/rust-fs-core
-          ref: v0.3.8
+          ref: v0.3.11
           path: rust-fs-core
+      - name: the agent guide carries the shared block
+        # AGENTS.md embeds agent-core, byte-identical with every sibling;
+        # rust-fs-core's check runs in place from the checkout above.
+        run: FS_CORE_CALLER="$PWD" bash rust-fs-core/scripts/agents-core-check.sh
+      - name: unreleased changelog entries are fragments
+        # agent-core v6: a pull request adds changelog.d/<branch>.md rather
+        # than editing CHANGELOG.md, and a release gathers them.
+        run: FS_CORE_CALLER="$PWD" bash rust-fs-core/scripts/changelog-check.sh
       - name: Classify the change
         id: c
         env:
