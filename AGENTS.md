@@ -16,7 +16,7 @@ canonical copy in rust-fs-core and propagate it, or rust-fs-core's
 `scripts/agents-core-check.sh` will fail. Everything after the END marker is
 specific to this repository.
 
-<!-- BEGIN SHARED BLOCK: agent-core v6 sha256:a2e65c36beb8403a1bfe5713518e3bb14b48d1304e95588326ff202bd82b9e9f -->
+<!-- BEGIN SHARED BLOCK: agent-core v7 sha256:1d6c04c827b22c2836e4b9d3977fda083f1ec322d8408a6b2ae5bf72de42b3e5 -->
 ## Claiming work
 
 Several agents work these repositories at the same time. Before you start on
@@ -167,37 +167,54 @@ it**. Do not silence output to fit, and do not route around `tier.sh`.
   request descriptions.
 - `main` takes **squash merges only**.
 - **Bring a branch up to date before every push.** `git fetch origin`, and
-  if `main` has moved past the branch, rebase onto `origin/main` first,
-  resolving any conflicts then, while they are small. Synced first, the run
+  if its base has moved -- the layer below it in the stack, or `main` at the
+  bottom -- rebase onto the base first, resolving any conflicts then, while
+  they are small. Synced first, the run
   tests the branch close to how it will land. And a branch synced at every
   push never goes stale: each sync takes in only what landed since the last
   one, so conflicts stay few and small. Sync when you are pushing anyway; a
   push made only to bring a branch up to date buys a whole CI run and
   nothing else.
-- **`main` merges through a merge queue.** A pull request whose own CI is
-  green goes into the queue: `gh pr merge --squash` adds it. The queue tests
-  each group on a temporary branch, `main` plus the queued pull requests in
-  order, and squash-merges each one only when that run is green, so what
-  lands is exactly the tree CI ran. That run is what "branches must be up to
+- **`main` merges through a merge queue.** A stack whose pull requests'
+  own CI is green goes into the queue: `gh stack merge <stack> --yes` adds
+  every layer up to the one named. Never queue a stacked pull request with
+  the REST `merge-async` call: it answers "enqueued" and queues nothing. The
+  queue tests each group on a temporary branch, `main` plus the queued pull
+  requests in order, and squash-merges each one only when that run is green,
+  so what lands is exactly the tree CI ran. That run is what "branches must be up to
   date" used to buy, at one run per group instead of one per pull request per
   merge: never update a branch only so that it can merge. Every workflow
   that gates `main` triggers on `merge_group`, or the queue never sees its
   result and nothing merges.
-- **A pull request that would conflict with an older open one is stacked
-  on it.** Before opening a pull request, and again whenever its base
-  merges, ask `../rust-fs-core/scripts/stack-base.sh` (run in place; in
-  rust-fs-core itself, `scripts/stack-base.sh`). It prints `main`, or the
-  branch of the newest older open pull request this branch would conflict
-  with or is already built on: base the pull request there (`gh pr create
-  --base`, `gh pr edit --base`). Overlap means a conflict, found by a trial
-  merge, not a shared file: pull requests that change one file in different
-  places merge in any order and stay on `main`. Asking the script rather
-  than judging means two agents never stack the same pair both ways. When
-  the base merges, GitHub retargets the pull request at the base's own
-  base; ask again, and rebase onto the answer with `git rebase --onto <new
-  base> <old base>`, since a squash merge leaves the old base's commits out
-  of `main`. A stacked pull request joins the merge queue once it is based
-  on `main`.
+
+## One stack per repository
+
+Every repository lands its pull requests as one stack, whether or not they
+touch the same files. Conflicts are then paid for once, when a pull request
+joins the stack, instead of again in the merge queue after every merge.
+
+- **A new pull request goes on the top.** Ask
+  `../rust-fs-core/scripts/stack-base.sh` (run in place; in rust-fs-core
+  itself, `scripts/stack-base.sh`): it prints the head branch of the top of
+  the stack, or `main` when nothing is open. Rebase onto that branch, resolve
+  every conflict locally while you do, and build and lint the result before
+  you push. A merge that is clean on your machine is clean in CI, so a
+  conflict that reaches the queue means the base was stale or the technique
+  was wrong. Then link the pull request into the stack: `gh stack link
+  <stack> <pull request>`.
+- **One squashed commit per layer.** Squash the branch to one commit on the
+  layer below before it joins, so the layers above replay without resolving
+  anything again.
+- **The queue still tests every layer.** It runs the full pipeline on `main`
+  plus each layer and the layers below it, and squash-merges each layer as
+  its own commit, so nothing lands untested and `main` stays bisectable.
+- **A red layer stops the stack.** Fix it in place, on its own branch, then
+  replay every layer above it with `git rebase --update-refs` and push them
+  together. Do not move a red layer to the top: the layers above were
+  resolved against it. Take a layer out only when its fix cannot come soon,
+  and say so on its pull request.
+- **Never delete a branch a pull request is based on.** Deleting it closes
+  every pull request above it, and none can be reopened while it is gone.
 
 ## Changelog entries are fragments
 
@@ -223,7 +240,7 @@ a fragment until it ships and a line of `CHANGELOG.md` after, never both.
   copying it is not.
 - **Each of these is a standalone project.** Never mention a consuming
   application in the README, the source, or CLI help.
-<!-- END SHARED BLOCK: agent-core v6 -->
+<!-- END SHARED BLOCK: agent-core v7 -->
 
 ## This repository
 
