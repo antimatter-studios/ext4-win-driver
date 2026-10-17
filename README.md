@@ -217,7 +217,7 @@ where the LocalSystem PATH doesn't reach the LLVM-MinGW runtime dir.
 - A forked
   [winfsp-rs](https://github.com/antimatter-studios/winfsp-rs) is checked
   out as a sibling at [`../winfsp-rs/`](../winfsp-rs), pinned to a commit
-  from the `gnullvm-support` branch (path-depended; the upstream PR is pending).
+  from the `fix/guard-strategy-constant-type` branch (path-depended; the upstream PR is pending).
   The fork also requires:
   - `LLVM` for `libclang.dll` (`winget install LLVM.LLVM`)
   - LLVM-MinGW (`winget install MartinStorsjo.LLVM-MinGW.UCRT`)

@@ -50,10 +50,10 @@ ctrlc = "3"
 # the `mount` feature does nothing (the cfg-gated module is empty).
 #
 # Path-depended on the antimatter-studios fork of winfsp-rs (checked out
-# as a sibling at ../winfsp-rs) until our gnullvm-support PR lands upstream
-# at SnowflakePowered/winfsp-rs. The patch lifts winfsp-sys/build.rs's
-# MSVC-only gate so the same MSVC-format .lib (consumed via lld-link)
-# works for *-pc-windows-gnullvm Rust toolchains too.
+# as a sibling at ../winfsp-rs) until its guard-strategy fix lands upstream
+# at SnowflakePowered/winfsp-rs. Upstream took the gnullvm support
+# itself in 0.13.0; the fork is upstream's release plus one fix that
+# lets the guard-strategy constants compile for *-pc-windows-gnullvm.
 #
 # NOT enabling winfsp-sys's `system` feature -- and this time the code
 # agrees with the comment. It said exactly this while the line beneath

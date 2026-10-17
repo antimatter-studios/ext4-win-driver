@@ -23,7 +23,7 @@ chore_min_version: 0.6.0
 #
 #   THIRD-PARTY FORKS -> siblings as well, pinned to a COMMIT.
 #     winfsp-rs is our fork of SnowflakePowered/winfsp-rs on the
-#     gnullvm-support branch, carrying a patch that is not ours to
+#     fix/guard-strategy-constant-type branch, carrying a patch that is not ours to
 #     release and not on a schedule we control. It used to be a
 #     submodule at vendor/winfsp-rs; it is now checked out at
 #     ../winfsp-rs like everything else, so there are no submodules
@@ -66,7 +66,7 @@ vars:
   # guard-strategy constant signed while bindgen emits it unsigned for
   # that target.
   WINFSP_RS_URL: https://github.com/antimatter-studios/winfsp-rs.git
-  WINFSP_RS_REF: 59ab48bca2a67c95d4eba640343b6b80b87bb6ea
+  WINFSP_RS_REF: 0e94163771bcfd3ec1265d3ab35eb2a871136940
   HARNESS_URL: https://github.com/antimatter-studios/fs-windows-test-harness.git
   # v4.2.0: a scenario must pass on its first attempt (no more silent
   # retries), and one matrix run holds the VM workdir at a time. Both
