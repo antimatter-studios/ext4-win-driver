@@ -104,7 +104,7 @@ fn format_mode_str(mode: u16, file_type: &fs_ext4_file_type_t) -> String {
 
 /// Format a Unix timestamp as a compact UTC string.
 ///
-/// Seconds are `i64` because that is what `am-fs-ext4` now reports.
+/// Seconds are `i64` because that is what `rust-fs-ext4` reports.
 /// Before 0.5.0 the C attribute struct carried `uint32_t` timestamps;
 /// ext4 stores a *signed* 32-bit base extended by two epoch bits, so
 /// the real range is roughly 1901..2446 and the old type truncated
